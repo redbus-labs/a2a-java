@@ -6,7 +6,7 @@
 
     <groupId>io.github.a2asdk</groupId>
     <artifactId>a2a-java-sdk-parent</artifactId>
-    <version>1.0.0.Alpha2-SNAPSHOT</version>
+    <version>1.0.0.Alpha3-SNAPSHOT</version>
 
     <packaging>pom</packaging>
 
@@ -69,8 +69,8 @@
         <rest-assured.version>5.5.1</rest-assured.version>
         <slf4j.version>2.0.17</slf4j.version>
         <logback.version>1.5.18</logback.version>
-        <error-prone.version>2.45.0</error-prone.version>
-        <nullaway.version>0.12.14</nullaway.version>
+        <error-prone.version>2.47.0</error-prone.version>
+        <nullaway.version>0.13.1</nullaway.version>
         <error-prone.flag>-XDaddTypeAnnotationsToSymbol=true</error-prone.flag>
         <nullaway.args>-Xplugin:ErrorProne -XepDisableAllChecks -Xep:NullAway:ERROR -Xep:RequireExplicitNullMarking:WARN -XepOpt:NullAway:ExhaustiveOverride=true -XepOpt:NullAway:OnlyNullMarked=true -XepOpt:NullAway:JSpecifyMode=true -XepExcludedPaths:.*/src/test/.* -XepDisableWarningsInGeneratedCode</nullaway.args>
 
@@ -187,6 +187,36 @@
             <dependency>
                 <groupId>${project.groupId}</groupId>
                 <artifactId>a2a-java-sdk-reference-rest</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.a2asdk</groupId>
+                <artifactId>a2a-java-sdk-opentelemetry</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.a2asdk</groupId>
+                <artifactId>a2a-java-sdk-opentelemetry-spring</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.a2asdk</groupId>
+                <artifactId>a2a-java-sdk-opentelemetry-common</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.a2asdk</groupId>
+                <artifactId>a2a-java-sdk-opentelemetry-client</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.a2asdk</groupId>
+                <artifactId>a2a-java-sdk-opentelemetry-server</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.github.a2asdk</groupId>
+                <artifactId>a2a-java-sdk-opentelemetry-client-propagation</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
@@ -512,6 +542,7 @@
         <module>examples/helloworld</module>
         <module>examples/cloud-deployment/server</module>
         <module>extras/common</module>
+        <module>extras/opentelemetry</module>
         <module>extras/task-store-database-jpa</module>
         <module>extras/push-notification-config-store-database-jpa</module>
         <module>extras/queue-manager-replicated</module>

@@ -13,6 +13,7 @@ import io.a2a.server.events.EventQueue;
 import io.a2a.server.events.EventQueueFactory;
 import io.a2a.server.events.EventQueueItem;
 import io.a2a.server.events.InMemoryQueueManager;
+import io.a2a.server.events.MainEventBus;
 import io.a2a.server.events.QueueManager;
 import io.a2a.server.tasks.TaskStateProvider;
 import org.slf4j.Logger;
@@ -45,10 +46,12 @@ public class ReplicatedQueueManager implements QueueManager {
     }
 
     @Inject
-    public ReplicatedQueueManager(ReplicationStrategy replicationStrategy, TaskStateProvider taskStateProvider) {
+    public ReplicatedQueueManager(ReplicationStrategy replicationStrategy,
+                                    TaskStateProvider taskStateProvider,
+                                    MainEventBus mainEventBus) {
         this.replicationStrategy = replicationStrategy;
         this.taskStateProvider = taskStateProvider;
-        this.delegate = new InMemoryQueueManager(new ReplicatingEventQueueFactory(), taskStateProvider);
+        this.delegate = new InMemoryQueueManager(new ReplicatingEventQueueFactory(), taskStateProvider, mainEventBus);
     }
 
 
@@ -77,8 +80,7 @@ public class ReplicatedQueueManager implements QueueManager {
 
     @Override
     public EventQueue createOrTap(String taskId) {
-        EventQueue queue = delegate.createOrTap(taskId);
-        return queue;
+        return delegate.createOrTap(taskId);
     }
 
     @Override
@@ -87,9 +89,11 @@ public class ReplicatedQueueManager implements QueueManager {
     }
 
     public void onReplicatedEvent(@Observes ReplicatedEventQueueItem replicatedEvent) {
-        // Check if task is still active before processing replicated event (unless it's a QueueClosedEvent)
-        // QueueClosedEvent should always be processed to terminate streams, even for inactive tasks
+        // Check if task is still active before processing replicated event
+        // Always allow QueueClosedEvent and Task events (they carry final state)
+        // Skip other event types for inactive tasks to prevent queue creation for expired tasks
         if (!replicatedEvent.isClosedEvent()
+                && !replicatedEvent.isTaskEvent()
                 && !taskStateProvider.isTaskActive(replicatedEvent.getTaskId())) {
             // Task is no longer active - skip processing this replicated event
             // This prevents creating queues for tasks that have been finalized beyond the grace period
@@ -97,38 +101,80 @@ public class ReplicatedQueueManager implements QueueManager {
             return;
         }
 
-        // Get or create a ChildQueue for this task (creates MainQueue if it doesn't exist)
-        EventQueue childQueue = delegate.createOrTap(replicatedEvent.getTaskId());
-
+        // Get the MainQueue to enqueue the replicated event item
+        // We must use enqueueItem (not enqueueEvent) to preserve the isReplicated() flag
+        // and avoid triggering the replication hook again (which would cause a replication loop)
+        //
+        // IMPORTANT: We must NOT create a ChildQueue here! Creating and immediately closing
+        // a ChildQueue means there are zero children when MainEventBusProcessor distributes
+        // the event. Existing ChildQueues (from active client subscriptions) will receive
+        // the event when MainEventBusProcessor distributes it to all children.
+        //
+        // If MainQueue doesn't exist, create it. This handles late-arriving replicated events
+        // for tasks that were created on another instance.
+        EventQueue childQueue = null;  // Track ChildQueue we might create
+        EventQueue mainQueue = delegate.get(replicatedEvent.getTaskId());
         try {
-            // Get the MainQueue to enqueue the replicated event item
-            // We must use enqueueItem (not enqueueEvent) to preserve the isReplicated() flag
-            // and avoid triggering the replication hook again (which would cause a replication loop)
-            EventQueue mainQueue = delegate.get(replicatedEvent.getTaskId());
+            if (mainQueue == null) {
+                LOGGER.debug("Creating MainQueue for replicated event on task {}", replicatedEvent.getTaskId());
+                childQueue = delegate.createOrTap(replicatedEvent.getTaskId());  // Creates MainQueue + returns ChildQueue
+                mainQueue = delegate.get(replicatedEvent.getTaskId());          // Get MainQueue from map
+            }
+
             if (mainQueue != null) {
                 mainQueue.enqueueItem(replicatedEvent);
             } else {
-                LOGGER.warn("MainQueue not found for task {}, cannot enqueue replicated event. This may happen if the queue was already cleaned up.",
-                    replicatedEvent.getTaskId());
+                LOGGER.warn(
+                        "MainQueue not found for task {}, cannot enqueue replicated event. This may happen if the queue was already cleaned up.",
+                        replicatedEvent.getTaskId());
             }
         } finally {
-            // Close the temporary ChildQueue to prevent leaks
-            // The MainQueue remains open for other consumers
-            childQueue.close();
+            if (childQueue != null) {
+                try {
+                    childQueue.close();  // Close the ChildQueue we created (not MainQueue!)
+                } catch (Exception ignore) {
+                    // The close is safe, but print a stacktrace just in case
+                    if (LOGGER.isDebugEnabled()) {
+                        ignore.printStackTrace();
+                    }
+                }
+            }
         }
     }
 
     /**
      * Observes task finalization events fired AFTER database transaction commits.
-     * This guarantees the task's final state is durably stored before sending the poison pill.
+     * This guarantees the task's final state is durably stored before replication.
      *
-     * @param event the task finalized event containing the task ID
+     * Sends TaskStatusUpdateEvent (not full Task) FIRST, then the poison pill (QueueClosedEvent),
+     * ensuring correct event ordering across instances and eliminating race conditions where
+     * the poison pill arrives before the final task state.
+     *
+     * IMPORTANT: We send TaskStatusUpdateEvent instead of full Task to maintain consistency
+     * with local event distribution. Clients expect TaskStatusUpdateEvent for status changes,
+     * and sending the full Task causes issues in remote instances where clients don't handle
+     * bare Task objects the same way they handle TaskStatusUpdateEvent.
+     *
+     * @param event the task finalized event containing the task ID and final Task
      */
     public void onTaskFinalized(@Observes(during = TransactionPhase.AFTER_SUCCESS) TaskFinalizedEvent event) {
         String taskId = event.getTaskId();
-        LOGGER.debug("Task {} finalized - sending poison pill (QueueClosedEvent) after transaction commit", taskId);
+        io.a2a.spec.Task finalTask = (io.a2a.spec.Task) event.getTask();  // Cast from Object
 
-        // Send poison pill directly via replication strategy
+        LOGGER.debug("Task {} finalized - sending TaskStatusUpdateEvent then poison pill (QueueClosedEvent) after transaction commit", taskId);
+
+        // Convert final Task to TaskStatusUpdateEvent to match local event distribution
+        // This ensures remote instances receive the same event type as local instances
+        io.a2a.spec.TaskStatusUpdateEvent finalStatusEvent = io.a2a.spec.TaskStatusUpdateEvent.builder()
+                .taskId(taskId)
+                .contextId(finalTask.contextId())
+                .status(finalTask.status())
+                .build();
+
+        // Send TaskStatusUpdateEvent FIRST to ensure it arrives before poison pill
+        replicationStrategy.send(taskId, finalStatusEvent);
+
+        // Then send poison pill
         // The transaction has committed, so the final state is guaranteed to be in the database
         io.a2a.server.events.QueueClosedEvent closedEvent = new io.a2a.server.events.QueueClosedEvent(taskId);
         replicationStrategy.send(taskId, closedEvent);
@@ -152,12 +198,11 @@ public class ReplicatedQueueManager implements QueueManager {
             // which sends the QueueClosedEvent after the database transaction commits.
             // This ensures proper ordering and transactional guarantees.
 
-            // Return the builder with callbacks
-            return delegate.getEventQueueBuilder(taskId)
-                    .taskId(taskId)
-                    .hook(new ReplicationHook(taskId))
-                    .addOnCloseCallback(delegate.getCleanupCallback(taskId))
-                    .taskStateProvider(taskStateProvider);
+            // Call createBaseEventQueueBuilder() directly to avoid infinite recursion
+            // (getEventQueueBuilder() would delegate back to this factory, creating a loop)
+            // The base builder already includes: taskId, cleanup callback, taskStateProvider, mainEventBus
+            return delegate.createBaseEventQueueBuilder(taskId)
+                    .hook(new ReplicationHook(taskId));
         }
     }
 

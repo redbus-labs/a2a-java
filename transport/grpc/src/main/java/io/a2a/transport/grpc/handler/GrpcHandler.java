@@ -57,15 +57,17 @@ import io.a2a.spec.UnsupportedOperationError;
 import io.a2a.spec.VersionNotSupportedError;
 import io.a2a.transport.grpc.context.GrpcContextKeys;
 import io.grpc.Context;
+import io.grpc.Metadata;
 import io.grpc.Status;
 import io.grpc.stub.StreamObserver;
+import org.jspecify.annotations.Nullable;
 
 @Vetoed
 public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
 
     // Hook so testing can wait until streaming subscriptions are established.
     // Without this we get intermittent failures
-    private static volatile Runnable streamingSubscribedRunnable;
+    private static volatile @Nullable Runnable streamingSubscribedRunnable;
 
     private final AtomicBoolean initialised = new AtomicBoolean(false);
 
@@ -159,7 +161,7 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
     }
 
     @Override
-    public void setTaskPushNotificationConfig(io.a2a.grpc.SetTaskPushNotificationConfigRequest request,
+    public void createTaskPushNotificationConfig(io.a2a.grpc.CreateTaskPushNotificationConfigRequest request,
                                                StreamObserver<io.a2a.grpc.TaskPushNotificationConfig> responseObserver) {
         if (!getAgentCardInternal().capabilities().pushNotifications()) {
             handleError(responseObserver, new PushNotificationNotSupportedError());
@@ -168,8 +170,8 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
 
         try {
             ServerCallContext context = createCallContext(responseObserver);
-            TaskPushNotificationConfig config = FromProto.setTaskPushNotificationConfig(request);
-            TaskPushNotificationConfig responseConfig = getRequestHandler().onSetTaskPushNotificationConfig(config, context);
+            TaskPushNotificationConfig config = FromProto.CreateTaskPushNotificationConfig(request);
+            TaskPushNotificationConfig responseConfig = getRequestHandler().onCreateTaskPushNotificationConfig(config, context);
             responseObserver.onNext(ToProto.taskPushNotificationConfig(responseConfig));
             responseObserver.onCompleted();
         } catch (A2AError e) {
@@ -242,7 +244,7 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
             A2AExtensions.validateRequiredExtensions(getAgentCardInternal(), context);
             MessageSendParams params = FromProto.messageSendParams(request);
             Flow.Publisher<StreamingEventKind> publisher = getRequestHandler().onMessageSendStream(params, context);
-            convertToStreamResponse(publisher, responseObserver);
+            convertToStreamResponse(publisher, responseObserver, context);
         } catch (A2AError e) {
             handleError(responseObserver, e);
         } catch (SecurityException e) {
@@ -263,8 +265,8 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
         try {
             ServerCallContext context = createCallContext(responseObserver);
             TaskIdParams params = FromProto.taskIdParams(request);
-            Flow.Publisher<StreamingEventKind> publisher = getRequestHandler().onResubscribeToTask(params, context);
-            convertToStreamResponse(publisher, responseObserver);
+            Flow.Publisher<StreamingEventKind> publisher = getRequestHandler().onSubscribeToTask(params, context);
+            convertToStreamResponse(publisher, responseObserver, context);
         } catch (A2AError e) {
             handleError(responseObserver, e);
         } catch (SecurityException e) {
@@ -275,15 +277,30 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
     }
 
     private void convertToStreamResponse(Flow.Publisher<StreamingEventKind> publisher,
-                                         StreamObserver<io.a2a.grpc.StreamResponse> responseObserver) {
+                                         StreamObserver<io.a2a.grpc.StreamResponse> responseObserver,
+                                         ServerCallContext context) {
         CompletableFuture.runAsync(() -> {
             publisher.subscribe(new Flow.Subscriber<StreamingEventKind>() {
-                private Flow.Subscription subscription;
+                private  Flow.@Nullable Subscription subscription;
 
                 @Override
                 public void onSubscribe(Flow.Subscription subscription) {
                     this.subscription = subscription;
-                    subscription.request(1);
+                    if (this.subscription != null) {
+                        this.subscription.request(1);
+                    }
+
+                    // Detect gRPC client disconnect and call EventConsumer.cancel() directly
+                    // This stops the polling loop without relying on subscription cancellation propagation
+                    Context grpcContext = Context.current();
+                    grpcContext.addListener(new Context.CancellationListener() {
+                        @Override
+                        public void cancelled(Context ctx) {
+                            LOGGER.fine(() -> "gRPC call cancelled by client, calling EventConsumer.cancel() to stop polling loop");
+                            context.invokeEventConsumerCancelCallback();
+                            subscription.cancel();
+                        }
+                    }, getExecutor());
 
                     // Notify tests that we are subscribed
                     Runnable runnable = streamingSubscribedRunnable;
@@ -296,15 +313,32 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
                 public void onNext(StreamingEventKind event) {
                     StreamResponse response = ToProto.streamResponse(event);
                     responseObserver.onNext(response);
-                    if (response.hasStatusUpdate() && response.getStatusUpdate().getFinal()) {
-                        responseObserver.onCompleted();
+                    if (response.hasStatusUpdate()) {
+                        io.a2a.grpc.TaskState state = response.getStatusUpdate().getStatus().getState();
+                        boolean isFinal = state == io.a2a.grpc.TaskState.TASK_STATE_CANCELED
+                                || state == io.a2a.grpc.TaskState.TASK_STATE_COMPLETED
+                                || state == io.a2a.grpc.TaskState.TASK_STATE_FAILED
+                                || state == io.a2a.grpc.TaskState.TASK_STATE_REJECTED;
+                        if (isFinal) {
+                            responseObserver.onCompleted();
+                        } else {
+                            if (this.subscription != null) {
+                                subscription.request(1);
+                            }
+                        }
                     } else {
-                        subscription.request(1);
+                        if (this.subscription != null) {
+                            this.subscription.request(1);
+                        }
                     }
                 }
 
                 @Override
                 public void onError(Throwable throwable) {
+                    // Cancel upstream to stop EventConsumer when error occurs
+                    if (this.subscription != null) {
+                        subscription.cancel();
+                     }
                     if (throwable instanceof A2AError jsonrpcError) {
                         handleError(responseObserver, jsonrpcError);
                     } else {
@@ -329,6 +363,9 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
             if (extendedAgentCard != null) {
                 responseObserver.onNext(ToProto.agentCard(extendedAgentCard));
                 responseObserver.onCompleted();
+            } else {
+                // Extended agent card not configured - return error instead of hanging
+                handleError(responseObserver, new ExtendedAgentCardNotConfiguredError(null, "Extended agent card not configured", null));
             }
         } catch (Throwable t) {
             handleInternalError(responseObserver, t);
@@ -385,8 +422,12 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
                     if (grpcMetadata != null) {
                         state.put("grpc_metadata", grpcMetadata);
                     }
-                    
-                    String methodName = GrpcContextKeys.METHOD_NAME_KEY.get(currentContext);
+                    Map<String, String> headers= new HashMap<>();
+                    for(String key : grpcMetadata.keys()) {
+                        headers.put(key, grpcMetadata.get(Metadata.Key.of(key, Metadata.ASCII_STRING_MARSHALLER)));
+                    }
+                    state.put("headers", headers);
+                    String methodName = GrpcContextKeys.GRPC_METHOD_NAME_KEY.get(currentContext);
                     if (methodName != null) {
                         state.put("grpc_method_name", methodName);
                     }
@@ -555,7 +596,7 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
      *
      * @return the version header value, or null if not available
      */
-    private String getVersionFromContext() {
+    private @Nullable String getVersionFromContext() {
         try {
             return GrpcContextKeys.VERSION_HEADER_KEY.get();
         } catch (Exception e) {
@@ -571,7 +612,7 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
      *
      * @return the extensions header value, or null if not available
      */
-    private String getExtensionsFromContext() {
+    private @Nullable String getExtensionsFromContext() {
         try {
             return GrpcContextKeys.EXTENSIONS_HEADER_KEY.get();
         } catch (Exception e) {
@@ -591,7 +632,7 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
      * @param key the context key to retrieve
      * @return the context value, or null if not available
      */
-    private static <T> T getFromContext(Context.Key<T> key) {
+    private static @Nullable <T> T getFromContext(Context.Key<T> key) {
         try {
             return key.get();
         } catch (Exception e) {
@@ -606,7 +647,7 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
      * 
      * @return the gRPC Metadata object, or null if not available
      */
-    protected static io.grpc.Metadata getCurrentMetadata() {
+    protected static io.grpc.@Nullable Metadata getCurrentMetadata() {
         return getFromContext(GrpcContextKeys.METADATA_KEY);
     }
     
@@ -616,8 +657,8 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
      * 
      * @return the method name, or null if not available
      */
-    protected static String getCurrentMethodName() {
-        return getFromContext(GrpcContextKeys.METHOD_NAME_KEY);
+    protected static @Nullable String getCurrentMethodName() {
+        return getFromContext(GrpcContextKeys.GRPC_METHOD_NAME_KEY);
     }
     
     /**
@@ -626,7 +667,7 @@ public abstract class GrpcHandler extends A2AServiceGrpc.A2AServiceImplBase {
      * 
      * @return the peer information, or null if not available
      */
-    protected static String getCurrentPeerInfo() {
+    protected static @Nullable String getCurrentPeerInfo() {
         return getFromContext(GrpcContextKeys.PEER_INFO_KEY);
     }
 }

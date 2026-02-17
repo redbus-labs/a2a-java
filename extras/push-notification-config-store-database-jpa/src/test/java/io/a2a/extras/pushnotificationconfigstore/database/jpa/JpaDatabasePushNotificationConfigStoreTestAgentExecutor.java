@@ -8,9 +8,8 @@ import jakarta.inject.Inject;
 
 import io.a2a.server.agentexecution.AgentExecutor;
 import io.a2a.server.agentexecution.RequestContext;
-import io.a2a.server.events.EventQueue;
+import io.a2a.server.tasks.AgentEmitter;
 import io.a2a.server.tasks.PushNotificationSender;
-import io.a2a.server.tasks.TaskUpdater;
 import io.a2a.spec.A2AError;
 import io.a2a.spec.InvalidRequestError;
 import io.a2a.spec.Message;
@@ -33,31 +32,29 @@ public class JpaDatabasePushNotificationConfigStoreTestAgentExecutor {
     public AgentExecutor agentExecutor() {
         return new AgentExecutor() {
             @Override
-            public void execute(RequestContext context, EventQueue eventQueue) throws A2AError {
-                TaskUpdater taskUpdater = new TaskUpdater(context, eventQueue);
+            public void execute(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
                 String command = getLastTextPart(context.getMessage());
 
                 // Switch based on the command from the test client
                 switch (command) {
                     case "create":
-                        taskUpdater.submit();
+                        agentEmitter.submit();
                         break;
                     case "update":
                         // Perform a meaningful update, like adding an artifact.
                         // This state change is what will trigger the notification.
-                        taskUpdater.addArtifact(List.of(new TextPart("updated-artifact")), "art-1", "test", null);
+                        agentEmitter.addArtifact(List.of(new TextPart("updated-artifact")), "art-1", "test", null);
                         break;
                     default:
                         // On the first message (which might have no text), just submit.
-                        taskUpdater.submit();
+                        agentEmitter.submit();
                         break;
                 }
             }
 
             @Override
-            public void cancel(RequestContext context, EventQueue eventQueue) throws A2AError {
-                TaskUpdater taskUpdater = new TaskUpdater(context, eventQueue);
-                taskUpdater.cancel();
+            public void cancel(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
+                agentEmitter.cancel();
             }
         };
     }

@@ -1,9 +1,16 @@
 package io.a2a.spec;
 
+import static io.a2a.spec.TaskState.CANCELED;
+import static io.a2a.spec.TaskState.COMPLETED;
+import static io.a2a.spec.TaskState.FAILED;
+import static io.a2a.spec.TaskState.INPUT_REQUIRED;
+import static io.a2a.spec.TaskState.REJECTED;
+
 import java.util.Map;
 
 import com.google.gson.annotations.SerializedName;
 import io.a2a.util.Assert;
+import org.jspecify.annotations.Nullable;
 
 /**
  * An event sent by the agent to notify the client of a change in a task's status.
@@ -15,13 +22,8 @@ import io.a2a.util.Assert;
  * @param isFinal whether this is a final status
  * @param metadata additional metadata (optional)
  */
-public record TaskStatusUpdateEvent(
-        String taskId,
-        TaskStatus status,
-        String contextId,
-        @SerializedName("final") boolean isFinal,
-        Map<String, Object> metadata
-) implements EventKind, StreamingEventKind, UpdateEvent {
+public record TaskStatusUpdateEvent(String taskId, TaskStatus status, String contextId,
+        @SerializedName("final") boolean isFinal, @Nullable Map<String, Object> metadata) implements EventKind, StreamingEventKind, UpdateEvent {
 
     /**
      * The identifier when used in streaming responses
@@ -30,6 +32,7 @@ public record TaskStatusUpdateEvent(
 
     /**
      * Compact constructor with validation.
+     *
      * @param taskId the task identifier (required)
      * @param status the task status (required)
      * @param contextId the context identifier (required)
@@ -41,11 +44,22 @@ public record TaskStatusUpdateEvent(
         Assert.checkNotNullParam("taskId", taskId);
         Assert.checkNotNullParam("status", status);
         Assert.checkNotNullParam("contextId", contextId);
+        if (isFinal != status.state().isFinal()) {
+            throw new IllegalArgumentException("isFinal must be the same as the Status state");
+        }
     }
 
     @Override
     public String kind() {
         return STREAMING_EVENT_ID;
+    }
+
+    /**
+     * Indicates if the task is fianl or waiting for some inputs from the client.
+     * @return true if the task is fianl or waiting for some inputs from the client - false otherwise.
+     */
+    public boolean isFinalOrInterrupted() {
+        return status.state() == COMPLETED || status.state() == FAILED || status.state() == CANCELED || status.state() == REJECTED || status.state() == INPUT_REQUIRED;
     }
 
     /**
@@ -71,11 +85,11 @@ public record TaskStatusUpdateEvent(
      * Builder for constructing {@link TaskStatusUpdateEvent} instances.
      */
     public static class Builder {
-        private String taskId;
-        private TaskStatus status;
-        private String contextId;
-        private boolean isFinal;
-        private Map<String, Object> metadata;
+
+        private @Nullable String taskId;
+        private @Nullable TaskStatus status;
+        private @Nullable String contextId;
+        private @Nullable Map<String, Object> metadata;
 
         private Builder() {
         }
@@ -84,7 +98,6 @@ public record TaskStatusUpdateEvent(
             this.taskId = existingTaskStatusUpdateEvent.taskId;
             this.status = existingTaskStatusUpdateEvent.status;
             this.contextId = existingTaskStatusUpdateEvent.contextId;
-            this.isFinal = existingTaskStatusUpdateEvent.isFinal;
             this.metadata = existingTaskStatusUpdateEvent.metadata;
         }
 
@@ -122,17 +135,6 @@ public record TaskStatusUpdateEvent(
         }
 
         /**
-         * Sets whether this is a final status.
-         *
-         * @param isFinal true if this is a final status
-         * @return this builder for method chaining
-         */
-        public Builder isFinal(boolean isFinal) {
-            this.isFinal = isFinal;
-            return this;
-        }
-
-        /**
          * Sets the metadata.
          *
          * @param metadata the metadata map
@@ -149,7 +151,12 @@ public record TaskStatusUpdateEvent(
          * @return a new TaskStatusUpdateEvent instance
          */
         public TaskStatusUpdateEvent build() {
-            return new TaskStatusUpdateEvent(taskId, status, contextId, isFinal, metadata);
+            return new TaskStatusUpdateEvent(
+                    Assert.checkNotNullParam("taskId", taskId),
+                    Assert.checkNotNullParam("status", status),
+                    Assert.checkNotNullParam("contextId", contextId),
+                    Assert.checkNotNullParam("status", status).state().isFinal(),
+                    metadata);
         }
     }
 }

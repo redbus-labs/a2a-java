@@ -54,7 +54,7 @@ public class JpaDatabaseTaskStoreTest {
                 .build();
 
         // Save the task
-        taskStore.save(task);
+        taskStore.save(task, false);
 
         // Retrieve the task
         Task retrieved = taskStore.get("test-task-1");
@@ -84,7 +84,7 @@ public class JpaDatabaseTaskStoreTest {
                 .build();
 
         // Save the task
-        taskStore.save(task);
+        taskStore.save(task, false);
 
         // Retrieve the task
         Task retrieved = taskStore.get("test-task-2");
@@ -108,7 +108,7 @@ public class JpaDatabaseTaskStoreTest {
                 .status(new TaskStatus(TaskState.SUBMITTED))
                 .build();
         
-        taskStore.save(initialTask);
+        taskStore.save(initialTask, false);
 
         // Update the task
         Task updatedTask = Task.builder()
@@ -117,7 +117,7 @@ public class JpaDatabaseTaskStoreTest {
                 .status(new TaskStatus(TaskState.COMPLETED))
                 .build();
         
-        taskStore.save(updatedTask);
+        taskStore.save(updatedTask, false);
 
         // Retrieve and verify the update
         Task retrieved = taskStore.get("test-task-3");
@@ -144,7 +144,7 @@ public class JpaDatabaseTaskStoreTest {
                 .status(new TaskStatus(TaskState.SUBMITTED))
                 .build();
         
-        taskStore.save(task);
+        taskStore.save(task, false);
 
         // Verify it exists
         assertNotNull(taskStore.get("test-task-4"));
@@ -180,7 +180,7 @@ public class JpaDatabaseTaskStoreTest {
                 .build();
 
         // Save and retrieve
-        taskStore.save(task);
+        taskStore.save(task, false);
         Task retrieved = taskStore.get("test-task-5");
         
         assertNotNull(retrieved);
@@ -201,7 +201,7 @@ public class JpaDatabaseTaskStoreTest {
                 .status(new TaskStatus(TaskState.WORKING))
                 .build();
         
-        taskStore.save(task);
+        taskStore.save(task, false);
         
         // Task should be active (not in final state)
         JpaDatabaseTaskStore jpaDatabaseTaskStore = (JpaDatabaseTaskStore) taskStore;
@@ -220,7 +220,7 @@ public class JpaDatabaseTaskStoreTest {
                 .status(new TaskStatus(TaskState.WORKING))
                 .build();
         
-        taskStore.save(task);
+        taskStore.save(task, false);
         
         // Update to final state
         Task finalTask = Task.builder()
@@ -229,7 +229,7 @@ public class JpaDatabaseTaskStoreTest {
                 .status(new TaskStatus(TaskState.COMPLETED))
                 .build();
         
-        taskStore.save(finalTask);
+        taskStore.save(finalTask, false);
         
         // Task should be active (within grace period - default 15 seconds)
         JpaDatabaseTaskStore jpaDatabaseTaskStore = (JpaDatabaseTaskStore) taskStore;
@@ -248,7 +248,7 @@ public class JpaDatabaseTaskStoreTest {
                 .status(new TaskStatus(TaskState.COMPLETED))
                 .build();
         
-        taskStore.save(task);
+        taskStore.save(task, false);
         
         // Directly update the finalizedAt timestamp to 20 seconds in the past
         // (beyond the default 15-second grace period)
@@ -322,9 +322,9 @@ public class JpaDatabaseTaskStoreTest {
                 .status(new TaskStatus(TaskState.COMPLETED))
                 .build();
 
-        taskStore.save(task1);
-        taskStore.save(task2);
-        taskStore.save(task3);
+        taskStore.save(task1, false);
+        taskStore.save(task2, false);
+        taskStore.save(task3, false);
 
         // List tasks for context-A
         ListTasksParams params = ListTasksParams.builder()
@@ -361,9 +361,9 @@ public class JpaDatabaseTaskStoreTest {
                 .status(new TaskStatus(TaskState.COMPLETED))
                 .build();
 
-        taskStore.save(task1);
-        taskStore.save(task2);
-        taskStore.save(task3);
+        taskStore.save(task1, false);
+        taskStore.save(task2, false);
+        taskStore.save(task3, false);
 
         // List only WORKING tasks in this context
         ListTasksParams params = ListTasksParams.builder()
@@ -401,9 +401,9 @@ public class JpaDatabaseTaskStoreTest {
                 .status(new TaskStatus(TaskState.WORKING))
                 .build();
 
-        taskStore.save(task1);
-        taskStore.save(task2);
-        taskStore.save(task3);
+        taskStore.save(task1, false);
+        taskStore.save(task2, false);
+        taskStore.save(task3, false);
 
         // List WORKING tasks in context-X
         ListTasksParams params = ListTasksParams.builder()
@@ -432,7 +432,7 @@ public class JpaDatabaseTaskStoreTest {
                     .contextId("context-pagination")
                     .status(new TaskStatus(TaskState.SUBMITTED, null, sameTimestamp))
                     .build();
-            taskStore.save(task);
+            taskStore.save(task, false);
         }
 
         // First page: pageSize=2
@@ -488,7 +488,7 @@ public class JpaDatabaseTaskStoreTest {
                 .contextId("context-diff-timestamps")
                 .status(new TaskStatus(TaskState.WORKING, null, now.minusMinutes(10)))
                 .build();
-        taskStore.save(task1);
+        taskStore.save(task1, false);
 
         // Task 2: 5 minutes ago, ID="task-diff-b"
         Task task2 = Task.builder()
@@ -496,7 +496,7 @@ public class JpaDatabaseTaskStoreTest {
                 .contextId("context-diff-timestamps")
                 .status(new TaskStatus(TaskState.WORKING, null, now.minusMinutes(5)))
                 .build();
-        taskStore.save(task2);
+        taskStore.save(task2, false);
 
         // Task 3: 5 minutes ago, ID="task-diff-c" (same timestamp as task2, tests ID tie-breaker)
         Task task3 = Task.builder()
@@ -504,7 +504,7 @@ public class JpaDatabaseTaskStoreTest {
                 .contextId("context-diff-timestamps")
                 .status(new TaskStatus(TaskState.WORKING, null, now.minusMinutes(5)))
                 .build();
-        taskStore.save(task3);
+        taskStore.save(task3, false);
 
         // Task 4: Now, ID="task-diff-d"
         Task task4 = Task.builder()
@@ -512,7 +512,7 @@ public class JpaDatabaseTaskStoreTest {
                 .contextId("context-diff-timestamps")
                 .status(new TaskStatus(TaskState.WORKING, null, now))
                 .build();
-        taskStore.save(task4);
+        taskStore.save(task4, false);
 
         // Task 5: 1 minute ago, ID="task-diff-e"
         Task task5 = Task.builder()
@@ -520,7 +520,7 @@ public class JpaDatabaseTaskStoreTest {
                 .contextId("context-diff-timestamps")
                 .status(new TaskStatus(TaskState.WORKING, null, now.minusMinutes(1)))
                 .build();
-        taskStore.save(task5);
+        taskStore.save(task5, false);
 
         // Expected order (timestamp DESC, id ASC):
         // 1. task-diff-d (now)
@@ -616,7 +616,7 @@ public class JpaDatabaseTaskStoreTest {
                 .history(longHistory)
                 .build();
 
-        taskStore.save(task);
+        taskStore.save(task, false);
 
         // List with historyLength=3 (should keep only last 3 messages) - filter by unique context
         ListTasksParams params = ListTasksParams.builder()
@@ -654,7 +654,7 @@ public class JpaDatabaseTaskStoreTest {
                 .artifacts(artifacts)
                 .build();
 
-        taskStore.save(task);
+        taskStore.save(task, false);
 
         // List without artifacts (default) - filter by unique context
         ListTasksParams paramsWithoutArtifacts = ListTasksParams.builder()
@@ -691,7 +691,7 @@ public class JpaDatabaseTaskStoreTest {
                     .contextId("context-default-pagesize")
                     .status(new TaskStatus(TaskState.SUBMITTED))
                     .build();
-            taskStore.save(task);
+            taskStore.save(task, false);
         }
 
         // List without specifying pageSize (should use default of 50)
@@ -715,7 +715,7 @@ public class JpaDatabaseTaskStoreTest {
                 .contextId("context-invalid-token")
                 .status(new TaskStatus(TaskState.WORKING))
                 .build();
-        taskStore.save(task);
+        taskStore.save(task, false);
 
         // Test 1: Legacy ID-only pageToken should throw InvalidParamsError
         ListTasksParams params1 = ListTasksParams.builder()
@@ -777,9 +777,9 @@ public class JpaDatabaseTaskStoreTest {
                 .build();
 
         // Save in reverse order
-        taskStore.save(task3);
-        taskStore.save(task1);
-        taskStore.save(task2);
+        taskStore.save(task3, false);
+        taskStore.save(task1, false);
+        taskStore.save(task2, false);
 
         // List should return sorted by timestamp DESC (all same), then by ID ASC
         ListTasksParams params = ListTasksParams.builder()

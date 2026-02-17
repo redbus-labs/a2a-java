@@ -3,8 +3,8 @@ package io.a2a.server.apps.quarkus;
 import static io.a2a.spec.A2AMethods.CANCEL_TASK_METHOD;
 import static io.a2a.spec.A2AMethods.GET_EXTENDED_AGENT_CARD_METHOD;
 import static io.a2a.spec.A2AMethods.SEND_STREAMING_MESSAGE_METHOD;
-import static io.a2a.spec.AgentCard.CURRENT_PROTOCOL_VERSION;
 import static io.a2a.transport.jsonrpc.context.JSONRPCContextKeys.METHOD_NAME_KEY;
+import static io.a2a.transport.jsonrpc.context.JSONRPCContextKeys.TENANT_KEY;
 import static java.util.Collections.singletonList;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -36,8 +36,8 @@ import io.a2a.jsonrpc.common.wrappers.SendMessageRequest;
 import io.a2a.jsonrpc.common.wrappers.SendMessageResponse;
 import io.a2a.jsonrpc.common.wrappers.SendStreamingMessageRequest;
 import io.a2a.jsonrpc.common.wrappers.SendStreamingMessageResponse;
-import io.a2a.jsonrpc.common.wrappers.SetTaskPushNotificationConfigRequest;
-import io.a2a.jsonrpc.common.wrappers.SetTaskPushNotificationConfigResponse;
+import io.a2a.jsonrpc.common.wrappers.CreateTaskPushNotificationConfigRequest;
+import io.a2a.jsonrpc.common.wrappers.CreateTaskPushNotificationConfigResponse;
 import io.a2a.jsonrpc.common.wrappers.SubscribeToTaskRequest;
 import io.a2a.server.ServerCallContext;
 import io.a2a.spec.AgentCapabilities;
@@ -108,6 +108,7 @@ public class A2AServerRoutesTest {
         when(mockRoutingContext.user()).thenReturn(null);
         when(mockRequest.headers()).thenReturn(mockHeaders);
         when(mockRoutingContext.body()).thenReturn(mockRequestBody);
+        when(mockRoutingContext.normalizedPath()).thenReturn("/");
 
         // Chain the response methods properly
         when(mockHttpResponse.setStatusCode(any(Integer.class))).thenReturn(mockHttpResponse);
@@ -224,7 +225,7 @@ public class A2AServerRoutesTest {
              "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
              "method": "GetTask",
              "params": {
-              "name": "tasks/de38c76d-d54c-436c-8b9f-4c2703648d64",
+              "id": "de38c76d-d54c-436c-8b9f-4c2703648d64",
               "historyLength": 10
              }
             }""";
@@ -261,7 +262,7 @@ public class A2AServerRoutesTest {
              "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
              "method": "CancelTask",
              "params": {
-              "name": "tasks/de38c76d-d54c-436c-8b9f-4c2703648d64"
+              "id": "de38c76d-d54c-436c-8b9f-4c2703648d64"
              }
             }""";
         when(mockRequestBody.asString()).thenReturn(jsonRpcRequest);
@@ -297,7 +298,7 @@ public class A2AServerRoutesTest {
              "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
              "method": "SubscribeToTask",
              "params": {
-              "name": "tasks/de38c76d-d54c-436c-8b9f-4c2703648d64"
+              "id": "de38c76d-d54c-436c-8b9f-4c2703648d64"
              }
             }""";
         when(mockRequestBody.asString()).thenReturn(jsonRpcRequest);
@@ -321,24 +322,21 @@ public class A2AServerRoutesTest {
     }
 
     @Test
-    public void testSetTaskPushNotificationConfig_MethodNameSetInContext() {
+    public void testCreateTaskPushNotificationConfig_MethodNameSetInContext() {
         // Arrange - using protobuf JSON format
         String jsonRpcRequest = """
             {
              "jsonrpc": "2.0",
              "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
-             "method": "SetTaskPushNotificationConfig",
+             "method": "CreateTaskPushNotificationConfig",
              "params": {
-              "parent": "tasks/de38c76d-d54c-436c-8b9f-4c2703648d64",
+              "taskId": "de38c76d-d54c-436c-8b9f-4c2703648d64",
               "configId": "config-123",
               "config": {
-               "name": "tasks/de38c76d-d54c-436c-8b9f-4c2703648d64/pushNotificationConfigs/config-123",
-               "pushNotificationConfig": {
                 "url": "https://example.com/callback",
                 "authentication": {
-                 "schemes": ["jwt"]
+                 "scheme": "jwt"
                 }
-               }
               }
              }
             }""";
@@ -350,12 +348,12 @@ public class A2AServerRoutesTest {
                 PushNotificationConfig.builder()
                         .id("config-123")
                         .url("https://example.com/callback")
-                        .authentication(new AuthenticationInfo(Collections.singletonList("jwt"), null))
+                        .authentication(new AuthenticationInfo("jwt", null))
                         .build(),
                 "tenant");
 
-        SetTaskPushNotificationConfigResponse realResponse = new SetTaskPushNotificationConfigResponse("1", responseConfig);
-        when(mockJsonRpcHandler.setPushNotificationConfig(any(SetTaskPushNotificationConfigRequest.class),
+        CreateTaskPushNotificationConfigResponse realResponse = new CreateTaskPushNotificationConfigResponse("1", responseConfig);
+        when(mockJsonRpcHandler.setPushNotificationConfig(any(CreateTaskPushNotificationConfigRequest.class),
                 any(ServerCallContext.class))).thenReturn(realResponse);
 
         ArgumentCaptor<ServerCallContext> contextCaptor = ArgumentCaptor.forClass(ServerCallContext.class);
@@ -364,7 +362,7 @@ public class A2AServerRoutesTest {
         routes.invokeJSONRPCHandler(jsonRpcRequest, mockRoutingContext);
 
         // Assert
-        verify(mockJsonRpcHandler).setPushNotificationConfig(any(SetTaskPushNotificationConfigRequest.class),
+        verify(mockJsonRpcHandler).setPushNotificationConfig(any(CreateTaskPushNotificationConfigRequest.class),
                 contextCaptor.capture());
         ServerCallContext capturedContext = contextCaptor.getValue();
         assertNotNull(capturedContext);
@@ -380,7 +378,8 @@ public class A2AServerRoutesTest {
              "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
              "method": "GetTaskPushNotificationConfig",
              "params": {
-              "name": "tasks/de38c76d-d54c-436c-8b9f-4c2703648d64/pushNotificationConfigs/config-456"
+              "taskId": "de38c76d-d54c-436c-8b9f-4c2703648d64",
+              "id": "config-456"
              }
             }""";
         when(mockRequestBody.asString()).thenReturn(jsonRpcRequest);
@@ -420,7 +419,9 @@ public class A2AServerRoutesTest {
              "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
              "method": "ListTaskPushNotificationConfig",
              "params": {
-              "parent": "tasks/de38c76d-d54c-436c-8b9f-4c2703648d64"
+              "taskId": "de38c76d-d54c-436c-8b9f-4c2703648d64",
+              "pageSize": 0,
+              "pageToken": ""
              }
             }""";
         when(mockRequestBody.asString()).thenReturn(jsonRpcRequest);
@@ -460,7 +461,8 @@ public class A2AServerRoutesTest {
              "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
              "method": "DeleteTaskPushNotificationConfig",
              "params": {
-              "name": "tasks/de38c76d-d54c-436c-8b9f-4c2703648d64/pushNotificationConfigs/config-456"
+              "taskId": "de38c76d-d54c-436c-8b9f-4c2703648d64",
+              "id": "config-456"
              }
             }""";
         when(mockRequestBody.asString()).thenReturn(jsonRpcRequest);
@@ -495,7 +497,6 @@ public class A2AServerRoutesTest {
                 .name("Test Agent")
                 .description("Test agent description")
                 .version("1.0.0")
-                .protocolVersions(CURRENT_PROTOCOL_VERSION)
                 .capabilities(AgentCapabilities.builder().build())
                 .defaultInputModes(Collections.singletonList("text"))
                 .defaultOutputModes(Collections.singletonList("text"))
@@ -518,6 +519,202 @@ public class A2AServerRoutesTest {
         ServerCallContext capturedContext = contextCaptor.getValue();
         assertNotNull(capturedContext);
         assertEquals(GET_EXTENDED_AGENT_CARD_METHOD, capturedContext.getState().get(METHOD_NAME_KEY));
+    }
+
+    @Test
+    public void testTenantExtraction_MultiSegmentPath() {
+        // Arrange - simulate request to /test/titi
+        when(mockRoutingContext.normalizedPath()).thenReturn("/test/titi");
+        String jsonRpcRequest = """
+            {
+             "jsonrpc": "2.0",
+             "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
+             "method": "GetTask",
+             "params": {
+              "id": "de38c76d-d54c-436c-8b9f-4c2703648d64",
+              "historyLength": 10
+             }
+            }""";
+        when(mockRequestBody.asString()).thenReturn(jsonRpcRequest);
+
+        Task responseTask = Task.builder()
+                .id("de38c76d-d54c-436c-8b9f-4c2703648d64")
+                .contextId("context-1234")
+                .status(new TaskStatus(TaskState.SUBMITTED))
+                .build();
+        GetTaskResponse realResponse = new GetTaskResponse("1", responseTask);
+        when(mockJsonRpcHandler.onGetTask(any(GetTaskRequest.class), any(ServerCallContext.class)))
+                .thenReturn(realResponse);
+
+        ArgumentCaptor<ServerCallContext> contextCaptor = ArgumentCaptor.forClass(ServerCallContext.class);
+
+        // Act
+        routes.invokeJSONRPCHandler(jsonRpcRequest, mockRoutingContext);
+
+        // Assert
+        verify(mockJsonRpcHandler).onGetTask(any(GetTaskRequest.class), contextCaptor.capture());
+        ServerCallContext capturedContext = contextCaptor.getValue();
+        assertNotNull(capturedContext);
+        assertEquals("test/titi", capturedContext.getState().get(TENANT_KEY));
+    }
+
+    @Test
+    public void testTenantExtraction_RootPath() {
+        // Arrange - simulate request to /
+        when(mockRoutingContext.normalizedPath()).thenReturn("/");
+        String jsonRpcRequest = """
+            {
+             "jsonrpc": "2.0",
+             "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
+             "method": "GetTask",
+             "params": {
+              "id": "de38c76d-d54c-436c-8b9f-4c2703648d64",
+              "historyLength": 10
+             }
+            }""";
+        when(mockRequestBody.asString()).thenReturn(jsonRpcRequest);
+
+        Task responseTask = Task.builder()
+                .id("de38c76d-d54c-436c-8b9f-4c2703648d64")
+                .contextId("context-1234")
+                .status(new TaskStatus(TaskState.SUBMITTED))
+                .build();
+        GetTaskResponse realResponse = new GetTaskResponse("1", responseTask);
+        when(mockJsonRpcHandler.onGetTask(any(GetTaskRequest.class), any(ServerCallContext.class)))
+                .thenReturn(realResponse);
+
+        ArgumentCaptor<ServerCallContext> contextCaptor = ArgumentCaptor.forClass(ServerCallContext.class);
+
+        // Act
+        routes.invokeJSONRPCHandler(jsonRpcRequest, mockRoutingContext);
+
+        // Assert
+        verify(mockJsonRpcHandler).onGetTask(any(GetTaskRequest.class), contextCaptor.capture());
+        ServerCallContext capturedContext = contextCaptor.getValue();
+        assertNotNull(capturedContext);
+        assertEquals("", capturedContext.getState().get(TENANT_KEY));
+    }
+
+    @Test
+    public void testTenantExtraction_SingleSegmentPath() {
+        // Arrange - simulate request to /tenant1
+        when(mockRoutingContext.normalizedPath()).thenReturn("/tenant1");
+        String jsonRpcRequest = """
+            {
+             "jsonrpc": "2.0",
+             "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
+             "method": "GetTask",
+             "params": {
+              "id": "de38c76d-d54c-436c-8b9f-4c2703648d64",
+              "historyLength": 10
+             }
+            }""";
+        when(mockRequestBody.asString()).thenReturn(jsonRpcRequest);
+
+        Task responseTask = Task.builder()
+                .id("de38c76d-d54c-436c-8b9f-4c2703648d64")
+                .contextId("context-1234")
+                .status(new TaskStatus(TaskState.SUBMITTED))
+                .build();
+        GetTaskResponse realResponse = new GetTaskResponse("1", responseTask);
+        when(mockJsonRpcHandler.onGetTask(any(GetTaskRequest.class), any(ServerCallContext.class)))
+                .thenReturn(realResponse);
+
+        ArgumentCaptor<ServerCallContext> contextCaptor = ArgumentCaptor.forClass(ServerCallContext.class);
+
+        // Act
+        routes.invokeJSONRPCHandler(jsonRpcRequest, mockRoutingContext);
+
+        // Assert
+        verify(mockJsonRpcHandler).onGetTask(any(GetTaskRequest.class), contextCaptor.capture());
+        ServerCallContext capturedContext = contextCaptor.getValue();
+        assertNotNull(capturedContext);
+        assertEquals("tenant1", capturedContext.getState().get(TENANT_KEY));
+    }
+
+    @Test
+    public void testTenantExtraction_ThreeSegmentPath() {
+        // Arrange - simulate request to /tenant1/api/v1
+        when(mockRoutingContext.normalizedPath()).thenReturn("/tenant1/api/v1");
+        String jsonRpcRequest = """
+            {
+             "jsonrpc": "2.0",
+             "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
+             "method": "GetTask",
+             "params": {
+              "id": "de38c76d-d54c-436c-8b9f-4c2703648d64",
+              "historyLength": 10
+             }
+            }""";
+        when(mockRequestBody.asString()).thenReturn(jsonRpcRequest);
+
+        Task responseTask = Task.builder()
+                .id("de38c76d-d54c-436c-8b9f-4c2703648d64")
+                .contextId("context-1234")
+                .status(new TaskStatus(TaskState.SUBMITTED))
+                .build();
+        GetTaskResponse realResponse = new GetTaskResponse("1", responseTask);
+        when(mockJsonRpcHandler.onGetTask(any(GetTaskRequest.class), any(ServerCallContext.class)))
+                .thenReturn(realResponse);
+
+        ArgumentCaptor<ServerCallContext> contextCaptor = ArgumentCaptor.forClass(ServerCallContext.class);
+
+        // Act
+        routes.invokeJSONRPCHandler(jsonRpcRequest, mockRoutingContext);
+
+        // Assert
+        verify(mockJsonRpcHandler).onGetTask(any(GetTaskRequest.class), contextCaptor.capture());
+        ServerCallContext capturedContext = contextCaptor.getValue();
+        assertNotNull(capturedContext);
+        assertEquals("tenant1/api/v1", capturedContext.getState().get(TENANT_KEY));
+    }
+
+    @Test
+    public void testTenantExtraction_StreamingRequest() {
+        // Arrange - simulate streaming request to /myTenant/api
+        when(mockRoutingContext.normalizedPath()).thenReturn("/myTenant/api");
+        String jsonRpcRequest = """
+            {
+             "jsonrpc": "2.0",
+             "id": "cd4c76de-d54c-436c-8b9f-4c2703648d64",
+             "method": "SendStreamingMessage",
+             "params": {
+              "message": {
+               "messageId": "message-1234",
+               "contextId": "context-1234",
+               "role": "ROLE_USER",
+               "parts": [
+                {
+                 "text": "tell me a joke"
+                }
+               ],
+               "metadata": {}
+              },
+              "configuration": {
+                "acceptedOutputModes": ["text"],
+                "blocking": true
+              },
+              "metadata": {}
+             }
+            }""";
+        when(mockRequestBody.asString()).thenReturn(jsonRpcRequest);
+
+        @SuppressWarnings("unchecked")
+        Flow.Publisher<SendStreamingMessageResponse> mockPublisher = mock(Flow.Publisher.class);
+        when(mockJsonRpcHandler.onMessageSendStream(any(SendStreamingMessageRequest.class),
+                any(ServerCallContext.class))).thenReturn(mockPublisher);
+
+        ArgumentCaptor<ServerCallContext> contextCaptor = ArgumentCaptor.forClass(ServerCallContext.class);
+
+        // Act
+        routes.invokeJSONRPCHandler(jsonRpcRequest, mockRoutingContext);
+
+        // Assert
+        verify(mockJsonRpcHandler).onMessageSendStream(any(SendStreamingMessageRequest.class),
+                contextCaptor.capture());
+        ServerCallContext capturedContext = contextCaptor.getValue();
+        assertNotNull(capturedContext);
+        assertEquals("myTenant/api", capturedContext.getState().get(TENANT_KEY));
     }
 
     /**

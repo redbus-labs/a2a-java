@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Map;
 
 import io.a2a.util.Assert;
+import java.util.Collections;
+import org.jspecify.annotations.Nullable;
 
 /**
  * The AgentCard is a self-describing manifest for an agent in the A2A Protocol.
@@ -33,10 +35,9 @@ import io.a2a.util.Assert;
  * @param defaultOutputModes list of supported output modes, e.g., "text", "audio" (required)
  * @param skills list of skills that this agent can perform (required)
  * @param securitySchemes map of security scheme names to their definitions (optional)
- * @param security list of security requirements for accessing the agent (optional)
+ * @param securityRequirements list of security requirements for accessing the agent (optional)
  * @param iconUrl URL to an icon representing the agent (optional)
  * @param supportedInterfaces ordered list of protocol+URL interface combinations; first entry is preferred (required)
- * @param protocolVersions the versions of the A2A Protocol this agent implements (defaults to a singleton list of {@link #CURRENT_PROTOCOL_VERSION})
  * @param signatures digital signatures verifying the authenticity of the agent card (optional)
  * @see AgentInterface
  * @see <a href="https://a2a-protocol.org/latest/">A2A Protocol Specification</a>
@@ -44,25 +45,21 @@ import io.a2a.util.Assert;
 public record AgentCard(
         String name,
         String description,
-        AgentProvider provider,
+        @Nullable AgentProvider provider,
         String version,
-        String documentationUrl,
+        @Nullable String documentationUrl,
         AgentCapabilities capabilities,
         List<String> defaultInputModes,
         List<String> defaultOutputModes,
         List<AgentSkill> skills,
-        Map<String, SecurityScheme> securitySchemes,
-        List<Map<String, List<String>>> security,
-        String iconUrl,
+        @Nullable Map<String, SecurityScheme> securitySchemes,
+        @Nullable List<Map<String, List<String>>> securityRequirements,
+        @Nullable String iconUrl,
         List<AgentInterface> supportedInterfaces,
-        List<String> protocolVersions,
-        List<AgentCardSignature> signatures) {
-
-    /** The default A2A Protocol version used when not explicitly specified. */
-    public static final String CURRENT_PROTOCOL_VERSION = "1.0";
+        @Nullable List<AgentCardSignature> signatures) {
 
     /**
-     * Compact constructor that validates required fields and sets defaults.
+     * Compact constructor that validates required fields.
      *
      * @param name the name parameter (see class-level JavaDoc)
      * @param description the description parameter (see class-level JavaDoc)
@@ -74,10 +71,9 @@ public record AgentCard(
      * @param defaultOutputModes the defaultOutputModes parameter (see class-level JavaDoc)
      * @param skills the skills parameter (see class-level JavaDoc)
      * @param securitySchemes the securitySchemes parameter (see class-level JavaDoc)
-     * @param security the security parameter (see class-level JavaDoc)
+     * @param securityRequirements the security parameter (see class-level JavaDoc)
      * @param iconUrl the iconUrl parameter (see class-level JavaDoc)
      * @param supportedInterfaces the supportedInterfaces parameter (see class-level JavaDoc)
-     * @param protocolVersions the protocolVersions parameter (see class-level JavaDoc)
      * @param signatures the signatures parameter (see class-level JavaDoc)
      * @throws IllegalArgumentException if any required field is null
      */
@@ -90,10 +86,6 @@ public record AgentCard(
         Assert.checkNotNullParam("skills", skills);
         Assert.checkNotNullParam("supportedInterfaces", supportedInterfaces);
         Assert.checkNotNullParam("version", version);
-
-        if (protocolVersions == null || protocolVersions.isEmpty()) {
-            protocolVersions = List.of(CURRENT_PROTOCOL_VERSION);
-        }
     }
 
     /**
@@ -108,7 +100,7 @@ public record AgentCard(
     /**
      * Create a new Builder initialized with values from an existing AgentCard.
      * <p>
-     * This builder  creates defensive copies of mutable collections to ensure
+     * This builder creates defensive copies of mutable collections to ensure
      * that modifications to the builder do not affect the original AgentCard.
      *
      * @param card the AgentCard to copy values from
@@ -117,7 +109,6 @@ public record AgentCard(
     public static Builder builder(AgentCard card) {
         return new Builder(card);
     }
-
 
     /**
      * Builder for constructing immutable {@link AgentCard} instances.
@@ -150,27 +141,26 @@ public record AgentCard(
      * }</pre>
      */
     public static class Builder {
-        private String name;
-        private String description;
-        private AgentProvider provider;
-        private String version;
-        private String documentationUrl;
-        private AgentCapabilities capabilities;
-        private List<String> defaultInputModes;
-        private List<String> defaultOutputModes;
-        private List<AgentSkill> skills;
-        private Map<String, SecurityScheme> securitySchemes;
-        private List<Map<String, List<String>>> security;
-        private String iconUrl;
-        private List<AgentInterface> supportedInterfaces;
-        private List<String> protocolVersions;
-        private List<AgentCardSignature> signatures;
+
+        private @Nullable String name;
+        private @Nullable String description;
+        private @Nullable AgentProvider provider;
+        private @Nullable String version;
+        private @Nullable String documentationUrl;
+        private @Nullable AgentCapabilities capabilities;
+        private @Nullable List<String> defaultInputModes;
+        private @Nullable List<String> defaultOutputModes;
+        private @Nullable List<AgentSkill> skills;
+        private @Nullable Map<String, SecurityScheme> securitySchemes;
+        private @Nullable List<Map<String, List<String>>> securityRequirements;
+        private @Nullable String iconUrl;
+        private @Nullable List<AgentInterface> supportedInterfaces;
+        private @Nullable List<AgentCardSignature> signatures;
 
         /**
          * Creates a new Builder with all fields unset.
          */
         private Builder() {
-
         }
 
         /**
@@ -188,14 +178,13 @@ public record AgentCard(
             this.version = card.version;
             this.documentationUrl = card.documentationUrl;
             this.capabilities = card.capabilities;
-            this.defaultInputModes = card.defaultInputModes != null ? new ArrayList<>(card.defaultInputModes) : null;
-            this.defaultOutputModes = card.defaultOutputModes != null ? new ArrayList<>(card.defaultOutputModes) : null;
-            this.skills = card.skills != null ? new ArrayList<>(card.skills) : null;
-            this.securitySchemes = card.securitySchemes != null ? Map.copyOf(card.securitySchemes) : null;
-            this.security = card.security != null ? new ArrayList<>(card.security) : null;
+            this.defaultInputModes = card.defaultInputModes != null ? new ArrayList<>(card.defaultInputModes) : Collections.emptyList();
+            this.defaultOutputModes = card.defaultOutputModes != null ? new ArrayList<>(card.defaultOutputModes) : Collections.emptyList();
+            this.skills = card.skills != null ? new ArrayList<>(card.skills) : Collections.emptyList();
+            this.securitySchemes = card.securitySchemes != null ? Map.copyOf(card.securitySchemes) : Collections.emptyMap();
+            this.securityRequirements = card.securityRequirements != null ? new ArrayList<>(card.securityRequirements) :Collections.emptyList();
             this.iconUrl = card.iconUrl;
-            this.supportedInterfaces = card.supportedInterfaces != null ? new ArrayList<>(card.supportedInterfaces) : null;
-            this.protocolVersions = card.protocolVersions;
+            this.supportedInterfaces = card.supportedInterfaces != null ? new ArrayList<>(card.supportedInterfaces) : Collections.emptyList();
             this.signatures = card.signatures != null ? new ArrayList<>(card.signatures) : null;
         }
 
@@ -220,7 +209,6 @@ public record AgentCard(
             this.description = description;
             return this;
         }
-
 
         /**
          * Sets information about the organization or entity providing the agent.
@@ -332,11 +320,11 @@ public record AgentCard(
          * Each entry in the list represents an alternative security requirement,
          * where each map contains scheme names and their required scopes.
          *
-         * @param security the list of security requirements (optional)
+         * @param securityRequirements the list of security requirements (optional)
          * @return this builder for method chaining
          */
-        public Builder security(List<Map<String, List<String>>> security) {
-            this.security = security;
+        public Builder securityRequirements(List<Map<String, List<String>>> securityRequirements) {
+            this.securityRequirements = securityRequirements;
             return this;
         }
 
@@ -376,19 +364,6 @@ public record AgentCard(
         }
 
         /**
-         * Sets the version of the A2A Protocol this agent implements.
-         * <p>
-         * If not set, defaults to a single list of {@link AgentCard#CURRENT_PROTOCOL_VERSION}.
-         *
-         * @param protocolVersions the protocol versions
-         * @return this builder for method chaining
-         */
-        public Builder protocolVersions(String... protocolVersions) {
-            this.protocolVersions = List.of(protocolVersions);
-            return this;
-        }
-
-        /**
          * Sets the digital signatures verifying the authenticity of the agent card.
          * <p>
          * Signatures provide cryptographic proof that the agent card was issued by
@@ -412,10 +387,21 @@ public record AgentCard(
          * @throws IllegalArgumentException if any required field is null
          */
         public AgentCard build() {
-            return new AgentCard(name, description, provider, version, documentationUrl,
-                    capabilities, defaultInputModes, defaultOutputModes, skills,
-                    securitySchemes, security, iconUrl,
-                    supportedInterfaces, protocolVersions, signatures);
+            return new AgentCard(
+                    Assert.checkNotNullParam("name", name),
+                    Assert.checkNotNullParam("description", description),
+                    provider,
+                    Assert.checkNotNullParam("version", version),
+                    documentationUrl,
+                    Assert.checkNotNullParam("capabilities", capabilities),
+                    Assert.checkNotNullParam("defaultInputModes", defaultInputModes),
+                    Assert.checkNotNullParam("defaultOutputModes", defaultOutputModes),
+                    Assert.checkNotNullParam("skills", skills),
+                    securitySchemes,
+                    securityRequirements,
+                    iconUrl,
+                    Assert.checkNotNullParam("supportedInterfaces", supportedInterfaces),
+                    signatures);
         }
     }
 }

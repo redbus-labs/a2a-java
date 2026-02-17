@@ -1,5 +1,6 @@
 package io.a2a.server.tasks;
 
+import io.a2a.spec.StreamingEventKind;
 import io.a2a.spec.Task;
 
 /**
@@ -27,7 +28,8 @@ import io.a2a.spec.Task;
  * {@link BasePushNotificationSender} provides HTTP webhook delivery:
  * <ul>
  *   <li>Retrieves webhook URLs from {@link PushNotificationConfigStore}</li>
- *   <li>Sends HTTP POST requests with task JSON payload</li>
+ *   <li>Wraps events in StreamResponse format (per A2A spec section 4.3.3)</li>
+ *   <li>Sends HTTP POST requests with StreamResponse JSON payload</li>
  *   <li>Logs errors but doesn't fail the request</li>
  * </ul>
  *
@@ -47,11 +49,12 @@ import io.a2a.spec.Task;
  * @Priority(100)
  * public class KafkaPushNotificationSender implements PushNotificationSender {
  *     @Inject
- *     KafkaProducer<String, Task> producer;
+ *     KafkaProducer<String, StreamingEventKind> producer;
  *
  *     @Override
- *     public void sendNotification(Task task) {
- *         producer.send("task-updates", task.id(), task);
+ *     public void sendNotification(StreamingEventKind event) {
+ *         String taskId = extractTaskId(event);
+ *         producer.send("task-updates", taskId, event);
  *     }
  * }
  * }</pre>
@@ -78,18 +81,29 @@ import io.a2a.spec.Task;
 public interface PushNotificationSender {
 
     /**
-     * Sends a push notification containing the latest task state.
+     * Sends a push notification containing a streaming event.
      * <p>
-     * Called after the task has been persisted to {@link TaskStore}. Retrieve push
-     * notification URLs or messaging configurations from {@link PushNotificationConfigStore}
-     * using {@code task.id()}.
+     * Called after the event has been persisted to {@link TaskStore}. The event is wrapped
+     * in a StreamResponse format (per A2A spec section 4.3.3) with the appropriate oneof
+     * field set (task, message, statusUpdate, or artifactUpdate).
      * </p>
+     * <p>
+     * Retrieve push notification URLs or messaging configurations from
+     * {@link PushNotificationConfigStore} using the task ID extracted from the event.
+     * </p>
+     * Supported event types:
+     * <ul>
+     *   <li>{@link Task} - wrapped in StreamResponse.task</li>
+     *   <li>{@link io.a2a.spec.Message} - wrapped in StreamResponse.message</li>
+     *   <li>{@link io.a2a.spec.TaskStatusUpdateEvent} - wrapped in StreamResponse.statusUpdate</li>
+     *   <li>{@link io.a2a.spec.TaskArtifactUpdateEvent} - wrapped in StreamResponse.artifactUpdate</li>
+     * </ul>
      * <p>
      * <b>Error Handling:</b> Log errors but don't throw exceptions. Notifications are
      * best-effort and should not fail the primary request.
      * </p>
      *
-     * @param task the task with current state and artifacts to send
+     * @param event the streaming event to send (Task, Message, TaskStatusUpdateEvent, or TaskArtifactUpdateEvent)
      */
-    void sendNotification(Task task);
+    void sendNotification(StreamingEventKind event);
 }

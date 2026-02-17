@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
@@ -243,7 +244,7 @@ public class MultiInstanceReplicationTest {
     /**
      * Main multi-instance replication test following architect's guidance:
      * 1. Send initial message on app1 (creates task in non-final state)
-     * 2. Resubscribe to that task from both app1 and app2
+     * 2. Subscribe to that task from both app1 and app2
      * 3. Send message on app1, verify both subscribers receive it
      * 4. Send message on app2, verify both subscribers receive it
      * 5. Send final message to transition task to COMPLETED
@@ -254,9 +255,11 @@ public class MultiInstanceReplicationTest {
         final String taskId = "replication-test-task-" + System.currentTimeMillis();
         final String contextId = "replication-test-context";
 
-        // Step 1: Send initial message NON-streaming to create task
-        Message initialMessage = Message.builder(A2A.toUserMessage("Initial test message"))
-                .taskId(taskId)
+        Throwable testFailure = null;
+        try {
+            // Step 1: Send initial message NON-streaming to create task
+            Message initialMessage = Message.builder(A2A.toUserMessage("Initial test message"))
+                    .taskId(taskId)
                 .contextId(contextId)
                 .build();
 
@@ -308,11 +311,33 @@ public class MultiInstanceReplicationTest {
 
         AtomicReference<Throwable> app1Error = new AtomicReference<>();
         AtomicReference<Throwable> app2Error = new AtomicReference<>();
+        AtomicBoolean app1ReceivedInitialTask = new AtomicBoolean(false);
+        AtomicBoolean app2ReceivedInitialTask = new AtomicBoolean(false);
 
         // App1 subscriber
         BiConsumer<ClientEvent, AgentCard> app1Subscriber = (event, card) -> {
+            String eventDetail = event.getClass().getSimpleName();
+            if (event instanceof io.a2a.client.TaskUpdateEvent tue) {
+                eventDetail += " [" + tue.getUpdateEvent().getClass().getSimpleName();
+                if (tue.getUpdateEvent() instanceof io.a2a.spec.TaskStatusUpdateEvent statusEvent) {
+                    eventDetail += ", state=" + (statusEvent.status() != null ? statusEvent.status().state() : "null");
+                }
+                eventDetail += "]";
+            } else if (event instanceof io.a2a.client.TaskEvent te) {
+                eventDetail += " [state=" + (te.getTask().status() != null ? te.getTask().status().state() : "null") + "]";
+            }
+            System.out.println("APP1 received event: " + eventDetail);
+
+            // Per A2A spec 3.1.6: Handle initial TaskEvent on subscribe
+            if (!app1ReceivedInitialTask.get() && event instanceof io.a2a.client.TaskEvent) {
+                app1ReceivedInitialTask.set(true);
+                System.out.println("APP1 filtered initial TaskEvent");
+                // Don't count initial TaskEvent toward expected artifact/status events
+                return;
+            }
             app1Events.add(event);
-            app1EventCount.incrementAndGet();
+            int count = app1EventCount.incrementAndGet();
+            System.out.println("APP1 event count now: " + count + ", event: " + eventDetail);
         };
 
         Consumer<Throwable> app1ErrorHandler = error -> {
@@ -323,8 +348,28 @@ public class MultiInstanceReplicationTest {
 
         // App2 subscriber
         BiConsumer<ClientEvent, AgentCard> app2Subscriber = (event, card) -> {
+            String eventDetail = event.getClass().getSimpleName();
+            if (event instanceof io.a2a.client.TaskUpdateEvent tue) {
+                eventDetail += " [" + tue.getUpdateEvent().getClass().getSimpleName();
+                if (tue.getUpdateEvent() instanceof io.a2a.spec.TaskStatusUpdateEvent statusEvent) {
+                    eventDetail += ", state=" + (statusEvent.status() != null ? statusEvent.status().state() : "null");
+                }
+                eventDetail += "]";
+            } else if (event instanceof io.a2a.client.TaskEvent te) {
+                eventDetail += " [state=" + (te.getTask().status() != null ? te.getTask().status().state() : "null") + "]";
+            }
+            System.out.println("APP2 received event: " + eventDetail);
+
+            // Per A2A spec 3.1.6: Handle initial TaskEvent on subscribe
+            if (!app2ReceivedInitialTask.get() && event instanceof io.a2a.client.TaskEvent) {
+                app2ReceivedInitialTask.set(true);
+                System.out.println("APP2 filtered initial TaskEvent");
+                // Don't count initial TaskEvent toward expected artifact/status events
+                return;
+            }
             app2Events.add(event);
-            app2EventCount.incrementAndGet();
+            int count = app2EventCount.incrementAndGet();
+            System.out.println("APP2 event count now: " + count + ", event: " + eventDetail);
         };
 
         Consumer<Throwable> app2ErrorHandler = error -> {
@@ -333,9 +378,9 @@ public class MultiInstanceReplicationTest {
             }
         };
 
-        // Start subscriptions (resubscribe returns void)
-        getClient1().resubscribe(new TaskIdParams(taskId), List.of(app1Subscriber), app1ErrorHandler);
-        getClient2().resubscribe(new TaskIdParams(taskId), List.of(app2Subscriber), app2ErrorHandler);
+        // Start subscriptions (subscribe returns void)
+        getClient1().subscribeToTask(new TaskIdParams(taskId), List.of(app1Subscriber), app1ErrorHandler);
+        getClient2().subscribeToTask(new TaskIdParams(taskId), List.of(app2Subscriber), app2ErrorHandler);
 
         // Wait for subscriptions to be established - at least one event should arrive on each
         await()
@@ -409,9 +454,45 @@ public class MultiInstanceReplicationTest {
             throw new AssertionError("App2 subscriber error", app2Error.get());
         }
 
-        // Verify both received at least 3 events (could be more due to initial state events)
-        assertTrue(app1Events.size() >= 3, "App1 should receive at least 3 events, got: " + app1Events.size());
-        assertTrue(app2Events.size() >= 3, "App2 should receive at least 3 events, got: " + app2Events.size());
+            // Verify both received at least 3 events (could be more due to initial state events)
+            assertTrue(app1Events.size() >= 3, "App1 should receive at least 3 events, got: " + app1Events.size());
+            assertTrue(app2Events.size() >= 3, "App2 should receive at least 3 events, got: " + app2Events.size());
+        } catch (Throwable t) {
+            testFailure = t;
+            throw t;
+        } finally {
+            // Output container logs if test failed
+            if (testFailure != null) {
+                System.err.println("\n========================================");
+                System.err.println("TEST FAILED - Dumping container logs");
+                System.err.println("========================================\n");
+
+                dumpContainerLogs("KAFKA", kafka, 100);
+                dumpContainerLogs("APP1", app1, 200);
+                dumpContainerLogs("APP2", app2, 200);
+
+                System.err.println("\n========================================");
+                System.err.println("END OF CONTAINER LOGS");
+                System.err.println("========================================\n");
+            }
+        }
+    }
+
+    /**
+     * Dumps the last N lines of logs from a container to stderr.
+     */
+    private void dumpContainerLogs(String containerName, org.testcontainers.containers.ContainerState container, int lastLines) {
+        System.err.println("\n--- " + containerName + " LOGS (last " + lastLines + " lines) ---");
+        try {
+            String logs = container.getLogs();
+            String[] lines = logs.split("\n");
+            int start = Math.max(0, lines.length - lastLines);
+            for (int i = start; i < lines.length; i++) {
+                System.err.println(lines[i]);
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to retrieve " + containerName + " logs: " + e.getMessage());
+        }
     }
 
     /**

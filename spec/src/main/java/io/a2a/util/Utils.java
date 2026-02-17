@@ -3,7 +3,9 @@ package io.a2a.util;
 import static io.a2a.util.Assert.checkNotNullParam;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Logger;
 
 import com.google.gson.Gson;
@@ -129,8 +131,21 @@ public class Utils {
             log.fine(String.format("Appending parts to artifact id %s for task %s", artifactId, taskId));
             List<Part<?>> parts = new ArrayList<>(existingArtifact.parts());
             parts.addAll(newArtifact.parts());
+
+            Map<String, Object> mergedMetadata = null;
+            if (existingArtifact.metadata() != null || newArtifact.metadata() != null) {
+                mergedMetadata = new HashMap<>();
+                if (existingArtifact.metadata() != null) {
+                    mergedMetadata.putAll(existingArtifact.metadata());
+                }
+                if (newArtifact.metadata() != null) {
+                    mergedMetadata.putAll(newArtifact.metadata());
+                }
+            }
+
             Artifact updated = Artifact.builder(existingArtifact)
                     .parts(parts)
+                    .metadata(mergedMetadata)
                     .build();
             artifacts.set(existingArtifactIndex, updated);
         } else {

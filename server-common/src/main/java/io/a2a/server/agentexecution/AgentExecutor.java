@@ -1,6 +1,7 @@
 package io.a2a.server.agentexecution;
 
 import io.a2a.server.events.EventQueue;
+import io.a2a.server.tasks.AgentEmitter;
 import io.a2a.spec.A2AError;
 import io.opentelemetry.instrumentation.annotations.WithSpan;
 
@@ -18,9 +19,8 @@ import io.opentelemetry.instrumentation.annotations.WithSpan;
  * asynchronously in a background thread pool when requests arrive from transport layers.
  * Your implementation should:
  * <ul>
- *   <li>Use the {@link EventQueue} to enqueue task status updates and artifacts</li>
- *   <li>Use {@link io.a2a.server.tasks.TaskUpdater} helper for common lifecycle operations</li>
- *   <li>Handle cancellation via the {@link #cancel(RequestContext, EventQueue)} method</li>
+ *   <li>Use the {@link AgentEmitter} to send messages, update task status, and stream artifacts</li>
+ *   <li>Handle cancellation via the {@link #cancel(RequestContext, AgentEmitter)} method</li>
  *   <li>Be thread-safe if maintaining state across invocations</li>
  * </ul>
  *
@@ -57,14 +57,12 @@ import io.opentelemetry.instrumentation.annotations.WithSpan;
  *     }
  *
  *     @Override
- *     public void execute(RequestContext context, EventQueue eventQueue) {
- *         TaskUpdater updater = new TaskUpdater(context, eventQueue);
- *
+ *     public void execute(RequestContext context, AgentEmitter emitter) {
  *         // Initialize task if this is a new conversation
  *         if (context.getTask() == null) {
- *             updater.submit();
+ *             emitter.submit();
  *         }
- *         updater.startWork();
+ *         emitter.startWork();
  *
  *         // Extract user input from the message
  *         String userMessage = context.getUserInput("\n");
@@ -73,14 +71,14 @@ import io.opentelemetry.instrumentation.annotations.WithSpan;
  *         String weatherData = weatherService.getWeather(userMessage);
  *
  *         // Return result as artifact
- *         updater.addArtifact(List.of(new TextPart(weatherData, null)));
- *         updater.complete();
+ *         emitter.addArtifact(List.of(new TextPart(weatherData, null)));
+ *         emitter.complete();
  *     }
  *
  *     @Override
- *     public void cancel(RequestContext context, EventQueue eventQueue) {
+ *     public void cancel(RequestContext context, AgentEmitter emitter) {
  *         // Clean up resources and mark as canceled
- *         new TaskUpdater(context, eventQueue).cancel();
+ *         emitter.cancel();
  *     }
  * }
  * }</pre>
@@ -88,16 +86,15 @@ import io.opentelemetry.instrumentation.annotations.WithSpan;
  * <h2>Streaming Results</h2>
  * For long-running operations or LLM streaming, enqueue multiple artifacts:
  * <pre>{@code
- * updater.startWork();
+ * emitter.startWork();
  * for (String chunk : llmService.stream(userInput)) {
- *     updater.addArtifact(List.of(new TextPart(chunk, null)));
+ *     emitter.addArtifact(List.of(new TextPart(chunk, null)));
  * }
- * updater.complete();  // Final event closes the queue
+ * emitter.complete();  // Final event closes the queue
  * }</pre>
  *
  * @see RequestContext
- * @see io.a2a.server.tasks.TaskUpdater
- * @see io.a2a.server.events.EventQueue
+ * @see AgentEmitter
  * @see io.a2a.server.requesthandlers.DefaultRequestHandler
  * @see io.a2a.spec.AgentCard
  */
@@ -112,16 +109,16 @@ public interface AgentExecutor {
      * </p>
      * <p>
      * <b>Important:</b> Don't throw exceptions for business logic errors. Instead, use
-     * {@code updater.fail(errorMessage)} to communicate failures to the client gracefully.
+     * {@code emitter.fail(errorMessage)} to communicate failures to the client gracefully.
      * Only throw {@link A2AError} for truly exceptional conditions.
      * </p>
      *
      * @param context the request context containing the message, task state, and configuration
-     * @param eventQueue the queue for enqueueing status updates and artifacts
+     * @param emitter the agent emitter for sending messages, updating status, and streaming artifacts
      * @throws A2AError if execution fails catastrophically (exception propagates to client)
      */
     @WithSpan("AgentExecutor.execute")
-    void execute(RequestContext context, EventQueue eventQueue) throws A2AError;
+    void execute(RequestContext context, AgentEmitter emitter) throws A2AError;
 
     /**
      * Cancels an ongoing agent execution.
@@ -130,11 +127,11 @@ public interface AgentExecutor {
      * You should:
      * <ul>
      *   <li>Stop any ongoing work (interrupt LLM calls, cancel API requests)</li>
-     *   <li>Enqueue a CANCELED status event (typically via {@code TaskUpdater.cancel()})</li>
+     *   <li>Enqueue a CANCELED status event (typically via {@code emitter.cancel()})</li>
      *   <li>Clean up resources (close connections, release locks)</li>
      * </ul>
      * <p>
-     * <b>Note:</b> The {@link #execute(RequestContext, EventQueue)} method may still be
+     * <b>Note:</b> The {@link #execute(RequestContext, AgentEmitter)} method may still be
      * running on another thread. Use appropriate synchronization or interruption mechanisms
      * if your agent maintains cancellable state.
      * <p>
@@ -148,10 +145,10 @@ public interface AgentExecutor {
      * </ul>
      *
      * @param context the request context for the task being canceled
-     * @param eventQueue the queue for enqueueing the cancellation event
+     * @param emitter the agent emitter for sending the cancellation event
      * @throws io.a2a.spec.TaskNotCancelableError if this agent does not support cancellation
      * @throws A2AError if cancellation is supported but failed to execute
      */
     @WithSpan("AgentExecutor.cancel")
-    void cancel(RequestContext context, EventQueue eventQueue) throws A2AError;
+    void cancel(RequestContext context, AgentEmitter emitter) throws A2AError;
 }

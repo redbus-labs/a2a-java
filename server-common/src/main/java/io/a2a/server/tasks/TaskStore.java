@@ -100,8 +100,11 @@ public interface TaskStore {
      * Saves or updates a task.
      *
      * @param task the task to save
+     * @param isReplicated true if this task update came from a replicated event,
+     *                     false if it originated locally. Used to prevent feedback loops
+     *                     in replicated scenarios (e.g., don't fire TaskFinalizedEvent for replicated updates)
      */
-    void save(Task task);
+    void save(Task task, boolean isReplicated);
 
     /**
      * Retrieves a task by its ID.

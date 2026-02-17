@@ -4,6 +4,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.a2a.util.Assert;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Represents a distinct skill or capability that an agent can perform in the A2A Protocol.
@@ -35,13 +36,13 @@ import io.a2a.util.Assert;
  * @param examples example queries or use cases demonstrating the skill (optional)
  * @param inputModes supported input formats for this skill (optional, inherits from AgentCard if not set)
  * @param outputModes supported output formats for this skill (optional, inherits from AgentCard if not set)
- * @param security security requirements specific to this skill (optional)
+ * @param securityRequirements security requirements specific to this skill (optional)
  * @see AgentCard
  * @see <a href="https://a2a-protocol.org/latest/">A2A Protocol Specification</a>
  */
 public record AgentSkill(String id, String name, String description, List<String> tags,
-                         List<String> examples, List<String> inputModes, List<String> outputModes,
-                         List<Map<String, List<String>>> security) {
+                         @Nullable List<String> examples, @Nullable List<String> inputModes, @Nullable List<String> outputModes,
+                         @Nullable List<Map<String, List<String>>> securityRequirements) {
 
     /**
      * Compact constructor that validates required fields.
@@ -53,13 +54,13 @@ public record AgentSkill(String id, String name, String description, List<String
      * @param examples the examples parameter (see class-level JavaDoc)
      * @param inputModes the inputModes parameter (see class-level JavaDoc)
      * @param outputModes the outputModes parameter (see class-level JavaDoc)
-     * @param security the security parameter (see class-level JavaDoc)
+     * @param securityRequirements the security parameter (see class-level JavaDoc)
      * @throws IllegalArgumentException if id, name, description, or tags is null
      */
     public AgentSkill {
-        Assert.checkNotNullParam("description", description);
         Assert.checkNotNullParam("id", id);
         Assert.checkNotNullParam("name", name);
+        Assert.checkNotNullParam("description", description);
         Assert.checkNotNullParam("tags", tags);
     }
 
@@ -97,14 +98,14 @@ public record AgentSkill(String id, String name, String description, List<String
      */
     public static class Builder {
 
-        private String id;
-        private String name;
-        private String description;
-        private List<String> tags;
-        private List<String> examples;
-        private List<String> inputModes;
-        private List<String> outputModes;
-        private List<Map<String, List<String>>> security;
+        private @Nullable String id;
+        private @Nullable String name;
+        private @Nullable String description;
+        private @Nullable List<String> tags;
+        private @Nullable List<String> examples;
+        private @Nullable List<String> inputModes;
+        private @Nullable List<String> outputModes;
+        private @Nullable List<Map<String, List<String>>> securityRequirements;
 
         /**
          * Creates a new Builder with all fields unset.
@@ -216,11 +217,11 @@ public record AgentSkill(String id, String name, String description, List<String
          * defined in the AgentCard. Each entry represents an alternative security
          * requirement, where each map contains scheme names and their required scopes.
          *
-         * @param security list of security requirements (optional)
+         * @param securityRequirements list of security requirements (optional)
          * @return this builder for method chaining
          */
-        public Builder security(List<Map<String, List<String>>> security) {
-            this.security = security;
+        public Builder securityRequirements(List<Map<String, List<String>>> securityRequirements) {
+            this.securityRequirements = securityRequirements;
             return this;
         }
 
@@ -231,7 +232,15 @@ public record AgentSkill(String id, String name, String description, List<String
          * @throws IllegalArgumentException if any required field (id, name, description, tags) is null
          */
         public AgentSkill build() {
-            return new AgentSkill(id, name, description, tags, examples, inputModes, outputModes, security);
+            return new AgentSkill(
+                    Assert.checkNotNullParam("id", id),
+                    Assert.checkNotNullParam("name", name),
+                    Assert.checkNotNullParam("description", description),
+                    Assert.checkNotNullParam("tags", tags), 
+                    examples,
+                    inputModes,
+                    outputModes,
+                    securityRequirements);
         }
     }
 }

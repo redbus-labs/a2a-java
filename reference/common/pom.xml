@@ -7,7 +7,7 @@
     <parent>
         <groupId>io.github.a2asdk</groupId>
         <artifactId>a2a-java-sdk-parent</artifactId>
-        <version>1.0.0.Alpha2-SNAPSHOT</version>
+        <version>1.0.0.Alpha3-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
     <artifactId>a2a-java-sdk-reference-common</artifactId>
@@ -60,7 +60,7 @@
         </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
-            <artifactId>quarkus-rest-client-jackson</artifactId>
+            <artifactId>quarkus-rest-client</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

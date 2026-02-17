@@ -5,22 +5,28 @@ package io.a2a.extras.common.events;
  * This event is fired AFTER the database transaction commits, making it safe for downstream
  * components to assume the task is durably stored.
  *
- * <p>Used by the replicated queue manager to send poison pill events after ensuring
- * the final task state is committed to the database, eliminating race conditions.
+ * <p>Used by the replicated queue manager to send the final task state before the poison pill,
+ * ensuring correct event ordering across instances and eliminating race conditions.
  */
 public class TaskFinalizedEvent {
     private final String taskId;
+    private final Object task;  // Task type from io.a2a.spec - using Object to avoid dependency
 
-    public TaskFinalizedEvent(String taskId) {
+    public TaskFinalizedEvent(String taskId, Object task) {
         this.taskId = taskId;
+        this.task = task;
     }
 
     public String getTaskId() {
         return taskId;
     }
 
+    public Object getTask() {
+        return task;
+    }
+
     @Override
     public String toString() {
-        return "TaskFinalizedEvent{taskId='" + taskId + "'}";
+        return "TaskFinalizedEvent{taskId='" + taskId + "', task=" + task + "}";
     }
 }

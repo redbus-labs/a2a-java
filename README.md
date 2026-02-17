@@ -119,7 +119,6 @@ public class WeatherAgentCardProducer {
                 .capabilities(AgentCapabilities.builder()
                         .streaming(true)
                         .pushNotifications(false)
-                        .stateTransitionHistory(false)
                         .build())
                 .defaultInputModes(Collections.singletonList("text"))
                 .defaultOutputModes(Collections.singletonList("text"))
@@ -142,7 +141,7 @@ public class WeatherAgentCardProducer {
 import io.a2a.server.agentexecution.AgentExecutor;
 import io.a2a.server.agentexecution.RequestContext;
 import io.a2a.server.events.EventQueue;
-import io.a2a.server.tasks.TaskUpdater;
+import io.a2a.server.tasks.AgentEmitter;
 import io.a2a.spec.JSONRPCError;
 ...
 
@@ -160,21 +159,44 @@ public class WeatherAgentExecutorProducer {
     private static class WeatherAgentExecutor implements AgentExecutor {
         // ... implementation details ...
         @Override
-        public void execute(RequestContext context, EventQueue eventQueue) throws JSONRPCError {
-            TaskUpdater updater = new TaskUpdater(context, eventQueue);
+        public void execute(RequestContext context, AgentEmitter agentEmitter) throws JSONRPCError {
+            // mark the task as submitted and start working on it
             if (context.getTask() == null) {
-                updater.submit();
+                agentEmitter.submit();
             }
-            updater.startWork();
-            // ... agent logic ...
-            updater.complete();
+            agentEmitter.startWork();
+
+            // extract the text from the message
+            String userMessage = extractTextFromMessage(context.getMessage());
+
+            // call the weather agent with the user's message
+            String response = weatherAgent.chat(userMessage);
+
+            // create the response part
+            TextPart responsePart = new TextPart(response);
+            List<Part<?>> parts = List.of(responsePart);
+
+            // add the response as an artifact and complete the task
+            agentEmitter.addArtifact(parts);
+            agentEmitter.complete();
         }
 
         @Override
-        public void cancel(RequestContext context, EventQueue eventQueue) throws JSONRPCError {
-            // ... cancel logic ...
-            TaskUpdater updater = new TaskUpdater(context, eventQueue);
-            updater.cancel();
+        public void cancel(RequestContext context, AgentEmitter agentEmitter) throws JSONRPCError {
+            Task task = context.getTask();
+
+            if (task.getStatus().state() == TaskState.CANCELED) {
+                // task already cancelled
+                throw new TaskNotCancelableError();
+            }
+
+            if (task.getStatus().state() == TaskState.COMPLETED) {
+                // task already completed
+                throw new TaskNotCancelableError();
+            }
+
+            // cancel the task
+            agentEmitter.cancel();
         }
     }
 }
@@ -250,6 +272,120 @@ Built-in support for distributed tracing via OpenTelemetry is integrated into th
 
 ---
 
-## Examples
+TaskPushNotificationConfig taskConfig = TaskPushNotificationConfig.builder()
+        .taskId("task-1234")
+        .pushNotificationConfig(pushNotificationConfig)
+        .build();
+
+TaskPushNotificationConfig result = client.createTaskPushNotificationConfiguration(taskConfig);
+
+// You can also optionally specify a ClientCallContext with call-specific config to use
+TaskPushNotificationConfig result = client.createTaskPushNotificationConfiguration(taskConfig, clientCallContext);
+```
+
+#### List the push notification configurations for a task
+
+```java
+List<TaskPushNotificationConfig> configs = client.listTaskPushNotificationConfigurations(
+    new ListTaskPushNotificationConfigParams("task-1234"));
+
+// Additional properties can be specified using a map
+Map<String, Object> metadata = Map.of("filter", "active");
+List<TaskPushNotificationConfig> configs = client.listTaskPushNotificationConfigurations(
+    new ListTaskPushNotificationConfigParams("task-1234", metadata));
+
+// You can also optionally specify a ClientCallContext with call-specific config to use
+List<TaskPushNotificationConfig> configs = client.listTaskPushNotificationConfigurations(
+        new ListTaskPushNotificationConfigParams("task-1234"), clientCallContext);
+```
+
+#### Delete a push notification configuration for a task
+
+```java
+client.deleteTaskPushNotificationConfigurations(
+    new DeleteTaskPushNotificationConfigParams("task-1234", "config-4567"));
+
+// Additional properties can be specified using a map
+Map<String, Object> metadata = Map.of("reason", "cleanup");
+client.deleteTaskPushNotificationConfigurations(
+    new DeleteTaskPushNotificationConfigParams("task-1234", "config-4567", metadata));
+
+// You can also optionally specify a ClientCallContext with call-specific config to use
+client.deleteTaskPushNotificationConfigurations(
+    new DeleteTaskPushNotificationConfigParams("task-1234", "config-4567", clientCallContext);
+```
+
+#### Subscribe to a task
+
+```java
+// Subscribe to an ongoing task with id "task-1234" using configured consumers
+TaskIdParams taskIdParams = new TaskIdParams("task-1234");
+client.subscribeToTask(taskIdParams);
+
+// Or subscribe with custom consumers and error handler
+List<BiConsumer<ClientEvent, AgentCard>> customConsumers = List.of(
+    (event, card) -> System.out.println("Subscribe event: " + event)
+);
+Consumer<Throwable> customErrorHandler = error -> 
+    System.err.println("Subscribe error: " + error.getMessage());
+
+client.subscribeToTask(taskIdParams, customConsumers, customErrorHandler);
+
+// You can also optionally specify a ClientCallContext with call-specific config to use
+client.subscribeToTask(taskIdParams, clientCallContext);
+```
+
+#### Retrieve details about the server agent that this client agent is communicating with
+```java
+AgentCard serverAgentCard = client.getAgentCard();
+```
+
+## Additional Examples
+
+### Hello World Client Example
+
+A complete example of a Java A2A client communicating with a Python A2A server is available in the [examples/helloworld/client](examples/helloworld/client/README.md) directory. This example demonstrates:
+
+- Setting up and using the A2A Java client
+- Sending regular and streaming messages to a Python A2A server
+- Receiving and processing responses from the Python A2A server
+
+The example includes detailed instructions on how to run the Python A2A server and how to run the Java A2A client using JBang.
+
+Check out the [example's README](examples/helloworld/client/README.md) for more information.
+
+### Hello World Server Example
+
+A complete example of a Python A2A client communicating with a Java A2A server is available in the [examples/helloworld/server](examples/helloworld/server/README.md) directory. This example demonstrates:
+
+- A sample `AgentCard` producer
+- A sample `AgentExecutor` producer
+- A Java A2A server receiving regular and streaming messages from a Python A2A client
+
+Check out the [example's README](examples/helloworld/server/README.md) for more information.
+
+## Community Articles
+
+See [COMMUNITY_ARTICLES.md](COMMUNITY_ARTICLES.md) for a list of community articles and videos.
+
+## License
+
+This project is licensed under the terms of the [Apache 2.0 License](LICENSE).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
+
+## Server Integrations
+The following list contains community contributed integrations with various Java Runtimes.
+
+To contribute an integration, please see [CONTRIBUTING_INTEGRATIONS.md](CONTRIBUTING_INTEGRATIONS.md).
+
+* [reference/jsonrpc/README.md](reference/jsonrpc/README.md) - JSON-RPC 2.0 Reference implementation, based on Quarkus.
+* [reference/grpc/README.md](reference/grpc/README.md) - gRPC Reference implementation, based on Quarkus.
+* https://github.com/wildfly-extras/a2a-java-sdk-server-jakarta - This integration is based on Jakarta EE, and should work in all runtimes supporting the [Jakarta EE Web Profile](https://jakarta.ee/specifications/webprofile/).
+
+# Extras
+See the [`extras`](./extras/README.md) folder for extra functionality not provided by the SDK itself!
 
 You can find examples of how to use the A2A Java SDK in the [a2a-samples repository](https://github.com/a2aproject/a2a-samples/tree/main/samples/java/agents).

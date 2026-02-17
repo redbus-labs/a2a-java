@@ -1,5 +1,6 @@
 package io.a2a.server.tasks;
 
+import static io.a2a.spec.TaskState.FAILED;
 import static io.a2a.spec.TaskState.SUBMITTED;
 import static io.a2a.util.Assert.checkNotNullParam;
 import static io.a2a.util.Utils.appendArtifactToTask;
@@ -10,9 +11,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import io.a2a.spec.A2AError;
 import io.a2a.spec.A2AServerException;
 import io.a2a.spec.Event;
-import io.a2a.spec.InvalidParamsError;
+import io.a2a.spec.InternalError;
 import io.a2a.spec.Message;
 import io.a2a.spec.Task;
 import io.a2a.spec.TaskArtifactUpdateEvent;
@@ -59,12 +61,13 @@ public class TaskManager {
         return currentTask;
     }
 
-    Task saveTaskEvent(Task task) throws A2AServerException {
+    boolean saveTaskEvent(Task task, boolean isReplicated) throws A2AServerException {
         checkIdsAndUpdateIfNecessary(task.id(), task.contextId());
-        return saveTask(task);
+        Task savedTask = saveTask(task, isReplicated);
+        return savedTask.status() != null && savedTask.status().state() != null && savedTask.status().state().isFinal();
     }
 
-    Task saveTaskEvent(TaskStatusUpdateEvent event) throws A2AServerException {
+    boolean saveTaskEvent(TaskStatusUpdateEvent event, boolean isReplicated) throws A2AServerException {
         checkIdsAndUpdateIfNecessary(event.taskId(), event.contextId());
         Task task = ensureTask(event.taskId(), event.contextId());
 
@@ -86,10 +89,11 @@ public class TaskManager {
         }
 
         task = builder.build();
-        return saveTask(task);
+        Task savedTask = saveTask(task, isReplicated);
+        return savedTask.status() != null && savedTask.status().state() != null && savedTask.status().state().isFinal();
     }
 
-    Task saveTaskEvent(TaskArtifactUpdateEvent event) throws A2AServerException {
+    boolean saveTaskEvent(TaskArtifactUpdateEvent event, boolean isReplicated) throws A2AServerException {
         checkIdsAndUpdateIfNecessary(event.taskId(), event.contextId());
         Task task = ensureTask(event.taskId(), event.contextId());
         // taskId is guaranteed to be non-null after checkIdsAndUpdateIfNecessary
@@ -98,18 +102,56 @@ public class TaskManager {
             throw new IllegalStateException("taskId should not be null after checkIdsAndUpdateIfNecessary");
         }
         task = appendArtifactToTask(task, event, nonNullTaskId);
-        return saveTask(task);
+        Task savedTask = saveTask(task, isReplicated);
+        return savedTask.status() != null && savedTask.status().state() != null && savedTask.status().state().isFinal();
     }
 
-    public Event process(Event event) throws A2AServerException {
+    public boolean process(Event event, boolean isReplicated) throws A2AServerException {
+        boolean isFinal = false;
         if (event instanceof Task task) {
-            saveTaskEvent(task);
+            isFinal = saveTaskEvent(task, isReplicated);
         } else if (event instanceof TaskStatusUpdateEvent taskStatusUpdateEvent) {
-            saveTaskEvent(taskStatusUpdateEvent);
+            isFinal = saveTaskEvent(taskStatusUpdateEvent, isReplicated);
         } else if (event instanceof TaskArtifactUpdateEvent taskArtifactUpdateEvent) {
-            saveTaskEvent(taskArtifactUpdateEvent);
+            isFinal = saveTaskEvent(taskArtifactUpdateEvent, isReplicated);
+        } else if (event instanceof A2AError) {
+            // A2AError events trigger automatic transition to FAILED state
+            // Error details are NOT persisted in TaskStore (client-specific)
+            // Only the FAILED status is persisted and replicated across nodes
+
+            // A2AError events don't have taskId/contextId fields, so we need to ensure
+            // we have these from the existing task or TaskManager state
+            if (taskId == null) {
+                // No task context - A2AError event will be distributed to clients but no state update
+                LOGGER.debug("A2AError event without task context - skipping state update");
+                return true;  // Return true (is final) to stop event consumption
+            }
+
+            // Ensure we have contextId - get from existing task if not set
+            String errorContextId = contextId;
+            if (errorContextId == null) {
+                Task existingTask = getTask();
+                if (existingTask != null) {
+                    errorContextId = existingTask.contextId();
+                }
+            }
+
+            // Only create status update if we have contextId
+            if (errorContextId != null) {
+                LOGGER.debug("A2AError event detected, transitioning task {} to FAILED", taskId);
+                TaskStatusUpdateEvent failedEvent = TaskStatusUpdateEvent.builder()
+                        .taskId(taskId)
+                        .contextId(errorContextId)
+                        .status(new TaskStatus(FAILED))
+                        .build();
+                isFinal = saveTaskEvent(failedEvent, isReplicated);
+            } else {
+                // Can't update status without contextId, but error is still terminal
+                LOGGER.debug("A2AError event for task {} without contextId - skipping state update", taskId);
+                isFinal = true;
+            }
         }
-        return event;
+        return isFinal;
     }
 
     public Task updateWithMessage(Message message, Task task) {
@@ -125,7 +167,7 @@ public class TaskManager {
                 .status(status)
                 .history(history)
                 .build();
-        saveTask(task);
+        saveTask(task, false);  // Local operation, not replicated
         return task;
     }
 
@@ -133,7 +175,7 @@ public class TaskManager {
         if (taskId != null && !eventTaskId.equals(taskId)) {
             throw new A2AServerException(
                     "Invalid task id",
-                    new InvalidParamsError(String.format("Task in event doesn't match TaskManager ")));
+                    new InternalError(String.format("Task event has taskId %s but TaskManager has %s", eventTaskId, taskId)));
         }
         if (taskId == null) {
             taskId = eventTaskId;
@@ -155,7 +197,7 @@ public class TaskManager {
         }
         if (task == null) {
             task = createTask(eventTaskId, eventContextId);
-            saveTask(task);
+            saveTask(task, false);  // Local operation, not replicated
         }
         return task;
     }
@@ -170,8 +212,8 @@ public class TaskManager {
                 .build();
     }
 
-    private Task saveTask(Task task) {
-        taskStore.save(task);
+    private Task saveTask(Task task, boolean isReplicated) {
+        taskStore.save(task, isReplicated);
         if (taskId == null) {
             taskId = task.id();
             contextId = task.contextId();

@@ -48,7 +48,7 @@ public class TaskManagerTest {
     @Test
     public void testGetTaskExisting() {
         Task expectedTask = minimalTask;
-        taskStore.save(expectedTask);
+        taskStore.save(expectedTask, false);
         Task retrieved = taskManager.getTask();
         assertSame(expectedTask, retrieved);
     }
@@ -61,16 +61,16 @@ public class TaskManagerTest {
 
     @Test
     public void testSaveTaskEventNewTask() throws A2AServerException {
-        Task saved = taskManager.saveTaskEvent(minimalTask);
+        taskManager.saveTaskEvent(minimalTask, false);
+        Task saved = taskManager.getTask();
         Task retrieved = taskManager.getTask();
         assertSame(minimalTask, retrieved);
-        assertSame(retrieved, saved);
     }
 
     @Test
     public void testSaveTaskEventStatusUpdate() throws A2AServerException {
         Task initialTask = minimalTask;
-        taskStore.save(initialTask);
+        taskStore.save(initialTask, false);
 
         TaskStatus newStatus = new TaskStatus(
                 TaskState.WORKING,
@@ -88,11 +88,11 @@ public class TaskManagerTest {
                 new HashMap<>());
 
 
-        Task saved = taskManager.saveTaskEvent(event);
+        taskManager.saveTaskEvent(event, false);
+        Task saved = taskManager.getTask();
         Task updated = taskManager.getTask();
 
         assertNotSame(initialTask, updated);
-        assertSame(updated, saved);
 
         assertEquals(initialTask.id(), updated.id());
         assertEquals(initialTask.contextId(), updated.contextId());
@@ -114,10 +114,10 @@ public class TaskManagerTest {
                 .contextId(minimalTask.contextId())
                 .artifact(newArtifact)
                 .build();
-        Task saved = taskManager.saveTaskEvent(event);
+        taskManager.saveTaskEvent(event, false);
+        Task saved = taskManager.getTask();
 
         Task updatedTask = taskManager.getTask();
-        assertSame(updatedTask, saved);
 
         assertNotSame(initialTask, updatedTask);
         assertEquals(initialTask.id(), updatedTask.id());
@@ -141,10 +141,10 @@ public class TaskManagerTest {
                 .taskId("new-task")
                 .contextId("some-context")
                 .status(new TaskStatus(TaskState.SUBMITTED))
-                .isFinal(false)
                 .build();
 
-        Task task = taskManagerWithoutId.saveTaskEvent(event);
+        taskManagerWithoutId.saveTaskEvent(event, false);
+        Task task = taskManagerWithoutId.getTask();
         assertEquals(event.taskId(), taskManagerWithoutId.getTaskId());
         assertEquals(event.contextId(), taskManagerWithoutId.getContextId());
 
@@ -164,13 +164,13 @@ public class TaskManagerTest {
                 .status(new TaskStatus(TaskState.WORKING))
                 .build();
 
-        Task saved = taskManagerWithoutId.saveTaskEvent(task);
+        taskManagerWithoutId.saveTaskEvent(task, false);
+        Task saved = taskManager.getTask();
         assertEquals(task.id(), taskManagerWithoutId.getTaskId());
         assertEquals(task.contextId(), taskManagerWithoutId.getContextId());
 
         Task retrieved = taskManagerWithoutId.getTask();
         assertSame(task, retrieved);
-        assertSame(retrieved, saved);
     }
 
     @Test
@@ -190,17 +190,19 @@ public class TaskManagerTest {
                 .artifactId("artifact-id")
                 .name("artifact-1")
                 .parts(Collections.singletonList(new TextPart("existing content")))
+                .metadata(Map.of("key1", "value1"))
                 .build();
         Task taskWithArtifact = Task.builder(initialTask)
                 .artifacts(Collections.singletonList(existingArtifact))
                 .build();
-        taskStore.save(taskWithArtifact);
+        taskStore.save(taskWithArtifact, false);
 
         // Test: Append new parts to existing artifact
         Artifact newArtifact = Artifact.builder()
                 .artifactId("artifact-id")
                 .name("artifact-1")
                 .parts(Collections.singletonList(new TextPart("new content")))
+                .metadata(Map.of("key2", "value2"))
                 .build();
         TaskArtifactUpdateEvent event = TaskArtifactUpdateEvent.builder()
                 .taskId(minimalTask.id())
@@ -209,7 +211,8 @@ public class TaskManagerTest {
                 .append(true)
                 .build();
 
-        Task updatedTask = taskManager.saveTaskEvent(event);
+        taskManager.saveTaskEvent(event, false);
+        Task updatedTask = taskManager.getTask();
 
         assertEquals(1, updatedTask.artifacts().size());
         Artifact updatedArtifact = updatedTask.artifacts().get(0);
@@ -217,13 +220,16 @@ public class TaskManagerTest {
         assertEquals(2, updatedArtifact.parts().size());
         assertEquals("existing content", ((TextPart) updatedArtifact.parts().get(0)).text());
         assertEquals("new content", ((TextPart) updatedArtifact.parts().get(1)).text());
+
+        assertEquals("value1", updatedArtifact.metadata().get("key1"));
+        assertEquals("value2", updatedArtifact.metadata().get("key2"));
     }
 
     @Test
     public void testTaskArtifactUpdateEventAppendTrueWithoutExistingArtifact() throws A2AServerException {
         // Setup: Create a task without artifacts
         Task initialTask = minimalTask;
-        taskStore.save(initialTask);
+        taskStore.save(initialTask, false);
 
         // Test: Try to append to non-existent artifact (should be ignored)
         Artifact newArtifact = Artifact.builder()
@@ -238,7 +244,8 @@ public class TaskManagerTest {
                 .append(true)
                 .build();
 
-        Task saved = taskManager.saveTaskEvent(event);
+        taskManager.saveTaskEvent(event, false);
+        Task saved = taskManager.getTask();
         Task updatedTask = taskManager.getTask();
 
         // Should have no artifacts since append was ignored
@@ -257,7 +264,7 @@ public class TaskManagerTest {
         Task taskWithArtifact = Task.builder(initialTask)
                 .artifacts(Collections.singletonList(existingArtifact))
                 .build();
-        taskStore.save(taskWithArtifact);
+        taskStore.save(taskWithArtifact, false);
 
         // Test: Replace existing artifact (append=false)
         Artifact newArtifact = Artifact.builder()
@@ -272,7 +279,8 @@ public class TaskManagerTest {
                 .append(false)
                 .build();
 
-        Task saved = taskManager.saveTaskEvent(event);
+        taskManager.saveTaskEvent(event, false);
+        Task saved = taskManager.getTask();
         Task updatedTask = taskManager.getTask();
 
         assertEquals(1, updatedTask.artifacts().size());
@@ -294,7 +302,7 @@ public class TaskManagerTest {
         Task taskWithArtifact = Task.builder(initialTask)
                 .artifacts(Collections.singletonList(existingArtifact))
                 .build();
-        taskStore.save(taskWithArtifact);
+        taskStore.save(taskWithArtifact, false);
 
         // Test: Replace existing artifact (append=null, defaults to false)
         Artifact newArtifact = Artifact.builder()
@@ -308,7 +316,8 @@ public class TaskManagerTest {
                 .artifact(newArtifact)
                 .build(); // append is null
 
-        Task saved = taskManager.saveTaskEvent(event);
+        taskManager.saveTaskEvent(event, false);
+        Task saved = taskManager.getTask();
         Task updatedTask = taskManager.getTask();
 
         assertEquals(1, updatedTask.artifacts().size());
@@ -330,7 +339,7 @@ public class TaskManagerTest {
                 .build();
 
         assertThrows(A2AServerException.class, () -> {
-            taskManagerWithId.saveTaskEvent(differentTask);
+            taskManagerWithId.saveTaskEvent(differentTask, false);
         });
     }
 
@@ -343,11 +352,10 @@ public class TaskManagerTest {
                 .taskId("different-task-id")
                 .contextId("session-xyz")
                 .status(new TaskStatus(TaskState.WORKING))
-                .isFinal(false)
                 .build();
 
         assertThrows(A2AServerException.class, () -> {
-            taskManagerWithId.saveTaskEvent(event);
+            taskManagerWithId.saveTaskEvent(event, false);
         });
     }
 
@@ -368,7 +376,7 @@ public class TaskManagerTest {
                 .build();
 
         assertThrows(A2AServerException.class, () -> {
-            taskManagerWithId.saveTaskEvent(event);
+            taskManagerWithId.saveTaskEvent(event, false);
         });
     }
 
@@ -389,10 +397,10 @@ public class TaskManagerTest {
                 .taskId("new-task-id")
                 .contextId("some-context")
                 .status(new TaskStatus(TaskState.SUBMITTED))
-                .isFinal(false)
                 .build();
 
-        Task saved = taskManagerWithInitialMessage.saveTaskEvent(event);
+        taskManagerWithInitialMessage.saveTaskEvent(event, false);
+        Task saved = taskManager.getTask();
         Task retrieved = taskManagerWithInitialMessage.getTask();
 
         // Check that the task has the initial message in its history
@@ -426,10 +434,10 @@ public class TaskManagerTest {
                 .taskId("new-task-id")
                 .contextId("some-context")
                 .status(new TaskStatus(TaskState.SUBMITTED, taskMessage, null))
-                .isFinal(false)
                 .build();
 
-        Task saved = taskManagerWithInitialMessage.saveTaskEvent(event);
+        taskManagerWithInitialMessage.saveTaskEvent(event, false);
+        Task saved = taskManager.getTask();
         Task retrieved = taskManagerWithInitialMessage.getTask();
 
         // There should now be a history containing the initialMessage
@@ -447,7 +455,7 @@ public class TaskManagerTest {
     public void testMultipleArtifactsWithSameArtifactId() throws A2AServerException {
         // Test handling of multiple artifacts with the same artifactId
         Task initialTask = minimalTask;
-        taskStore.save(initialTask);
+        taskStore.save(initialTask, false);
 
         // Add first artifact
         Artifact artifact1 = Artifact.builder()
@@ -460,7 +468,7 @@ public class TaskManagerTest {
                 .contextId(minimalTask.contextId())
                 .artifact(artifact1)
                 .build();
-        taskManager.saveTaskEvent(event1);
+        taskManager.saveTaskEvent(event1, false);
 
         // Add second artifact with same artifactId (should replace the first)
         Artifact artifact2 = Artifact.builder()
@@ -473,7 +481,7 @@ public class TaskManagerTest {
                 .contextId(minimalTask.contextId())
                 .artifact(artifact2)
                 .build();
-        taskManager.saveTaskEvent(event2);
+        taskManager.saveTaskEvent(event2, false);
 
         Task updatedTask = taskManager.getTask();
         assertEquals(1, updatedTask.artifacts().size());
@@ -487,7 +495,7 @@ public class TaskManagerTest {
     public void testMultipleArtifactsWithDifferentArtifactIds() throws A2AServerException {
         // Test handling of multiple artifacts with different artifactIds
         Task initialTask = minimalTask;
-        taskStore.save(initialTask);
+        taskStore.save(initialTask, false);
 
         // Add first artifact
         Artifact artifact1 = Artifact.builder()
@@ -500,7 +508,7 @@ public class TaskManagerTest {
                 .contextId(minimalTask.contextId())
                 .artifact(artifact1)
                 .build();
-        taskManager.saveTaskEvent(event1);
+        taskManager.saveTaskEvent(event1, false);
 
         // Add second artifact with different artifactId (should be added)
         Artifact artifact2 = Artifact.builder()
@@ -513,7 +521,7 @@ public class TaskManagerTest {
                 .contextId(minimalTask.contextId())
                 .artifact(artifact2)
                 .build();
-        taskManager.saveTaskEvent(event2);
+        taskManager.saveTaskEvent(event2, false);
 
         Task updatedTask = taskManager.getTask();
         assertEquals(2, updatedTask.artifacts().size());
@@ -545,7 +553,7 @@ public class TaskManagerTest {
     public void testSaveTaskEventMetadataUpdate() throws A2AServerException {
         // Test that metadata from TaskStatusUpdateEvent gets saved to the task
         Task initialTask = minimalTask;
-        taskStore.save(initialTask);
+        taskStore.save(initialTask, false);
 
         Map<String, Object> newMetadata = new HashMap<>();
         newMetadata.put("meta_key_test", "meta_value_test");
@@ -554,11 +562,10 @@ public class TaskManagerTest {
                 .taskId(minimalTask.id())
                 .contextId(minimalTask.contextId())
                 .status(new TaskStatus(TaskState.WORKING))
-                .isFinal(false)
                 .metadata(newMetadata)
                 .build();
 
-        taskManager.saveTaskEvent(event);
+        taskManager.saveTaskEvent(event, false);
 
         Task updatedTask = taskManager.getTask();
         assertEquals(newMetadata, updatedTask.metadata());
@@ -568,17 +575,16 @@ public class TaskManagerTest {
     public void testSaveTaskEventMetadataUpdateNull() throws A2AServerException {
         // Test that null metadata in TaskStatusUpdateEvent doesn't affect task
         Task initialTask = minimalTask;
-        taskStore.save(initialTask);
+        taskStore.save(initialTask, false);
 
         TaskStatusUpdateEvent event = TaskStatusUpdateEvent.builder()
                 .taskId(minimalTask.id())
                 .contextId(minimalTask.contextId())
                 .status(new TaskStatus(TaskState.WORKING))
-                .isFinal(false)
                 .metadata(null)
                 .build();
 
-        taskManager.saveTaskEvent(event);
+        taskManager.saveTaskEvent(event, false);
 
         Task updatedTask = taskManager.getTask();
         // Should preserve original task's metadata (which is likely null for minimal task)
@@ -594,7 +600,7 @@ public class TaskManagerTest {
         Task taskWithMetadata = Task.builder(minimalTask)
                 .metadata(originalMetadata)
                 .build();
-        taskStore.save(taskWithMetadata);
+        taskStore.save(taskWithMetadata, false);
 
         Map<String, Object> newMetadata = new HashMap<>();
         newMetadata.put("new_key", "new_value");
@@ -603,11 +609,10 @@ public class TaskManagerTest {
                 .taskId(minimalTask.id())
                 .contextId(minimalTask.contextId())
                 .status(new TaskStatus(TaskState.WORKING))
-                .isFinal(false)
                 .metadata(newMetadata)
                 .build();
 
-        taskManager.saveTaskEvent(event);
+        taskManager.saveTaskEvent(event, false);
 
         Task updatedTask = taskManager.getTask();
 
@@ -631,10 +636,10 @@ public class TaskManagerTest {
                 .taskId("new-task-id")
                 .contextId("some-context")
                 .status(new TaskStatus(TaskState.SUBMITTED))
-                .isFinal(false)
                 .build();
 
-        Task savedTask = taskManagerWithMessage.saveTaskEvent(event);
+        taskManagerWithMessage.saveTaskEvent(event, false);
+        Task savedTask = taskManagerWithMessage.getTask();
 
         // Verify task was created properly
         assertNotNull(savedTask);
@@ -659,10 +664,10 @@ public class TaskManagerTest {
                 .taskId("new-task-id")
                 .contextId("some-context")
                 .status(new TaskStatus(TaskState.SUBMITTED))
-                .isFinal(false)
                 .build();
 
-        Task savedTask = taskManagerWithoutMessage.saveTaskEvent(event);
+        taskManagerWithoutMessage.saveTaskEvent(event, false);
+        Task savedTask = taskManagerWithoutMessage.getTask();
 
         // Verify task was created properly
         assertNotNull(savedTask);
@@ -685,7 +690,8 @@ public class TaskManagerTest {
                 .status(new TaskStatus(TaskState.WORKING))
                 .build();
 
-        Task savedTask = taskManagerWithoutId.saveTaskEvent(newTask);
+        taskManagerWithoutId.saveTaskEvent(newTask, false);
+        Task savedTask = taskManagerWithoutId.getTask();
 
         // Verify internal state was updated
         assertEquals("test-task-id", taskManagerWithoutId.getTaskId());
@@ -713,10 +719,10 @@ public class TaskManagerTest {
                 .taskId("new-task-id")
                 .contextId("some-context")
                 .status(new TaskStatus(TaskState.SUBMITTED, taskMessage, null))
-                .isFinal(false)
                 .build();
 
-        Task saved = taskManagerWithInitialMessage.saveTaskEvent(event);
+        taskManagerWithInitialMessage.saveTaskEvent(event, false);
+        Task saved = taskManagerWithInitialMessage.getTask();
 
         Message updateMessage = Message.builder()
                 .role(Message.Role.USER)

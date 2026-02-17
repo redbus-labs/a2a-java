@@ -65,19 +65,23 @@ public class JpaDatabaseTaskStore implements TaskStore, TaskStateProvider {
 
     @Transactional
     @Override
-    public void save(Task task) {
-        LOGGER.debug("Saving task with ID: {}", task.id());
+    public void save(Task task, boolean isReplicated) {
+        LOGGER.debug("Saving task with ID: {} (replicated: {})", task.id(), isReplicated);
         try {
             JpaTask jpaTask = JpaTask.createFromTask(task);
             em.merge(jpaTask);
             LOGGER.debug("Persisted/updated task with ID: {}", task.id());
 
-            if (task.status() != null && task.status().state() != null && task.status().state().isFinal()) {
+            // Only fire TaskFinalizedEvent for locally-generated final states, NOT for replicated events
+            // This prevents feedback loops where receiving a replicated final task triggers another replication
+            if (!isReplicated && task.status() != null && task.status().state() != null && task.status().state().isFinal()) {
                 // Fire CDI event if task reached final state
                 // IMPORTANT: The event will be delivered AFTER transaction commits (AFTER_SUCCESS observers)
-                // This ensures the task's final state is durably stored before the QueueClosedEvent poison pill is sent
-                LOGGER.debug("Task {} is in final state, firing TaskFinalizedEvent", task.id());
-                taskFinalizedEvent.fire(new TaskFinalizedEvent(task.id()));
+                // This ensures the task's final state is durably stored before the final task and poison pill are sent
+                LOGGER.debug("Task {} is in final state, firing TaskFinalizedEvent with full Task", task.id());
+                taskFinalizedEvent.fire(new TaskFinalizedEvent(task.id(), task));
+            } else if (isReplicated && task.status() != null && task.status().state() != null && task.status().state().isFinal()) {
+                LOGGER.debug("Task {} is in final state but from replication - NOT firing TaskFinalizedEvent (prevents feedback loop)", task.id());
             }
         } catch (JsonProcessingException e) {
             LOGGER.error("Failed to serialize task with ID: {}", task.id(), e);

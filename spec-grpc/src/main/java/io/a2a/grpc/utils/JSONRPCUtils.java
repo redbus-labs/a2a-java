@@ -61,8 +61,8 @@ import io.a2a.jsonrpc.common.wrappers.ListTasksResponse;
 import io.a2a.jsonrpc.common.wrappers.SendMessageRequest;
 import io.a2a.jsonrpc.common.wrappers.SendMessageResponse;
 import io.a2a.jsonrpc.common.wrappers.SendStreamingMessageRequest;
-import io.a2a.jsonrpc.common.wrappers.SetTaskPushNotificationConfigRequest;
-import io.a2a.jsonrpc.common.wrappers.SetTaskPushNotificationConfigResponse;
+import io.a2a.jsonrpc.common.wrappers.CreateTaskPushNotificationConfigRequest;
+import io.a2a.jsonrpc.common.wrappers.CreateTaskPushNotificationConfigResponse;
 import io.a2a.jsonrpc.common.wrappers.SubscribeToTaskRequest;
 import io.a2a.spec.A2AError;
 import io.a2a.spec.ContentTypeNotSupportedError;
@@ -183,7 +183,7 @@ public class JSONRPCUtils {
     private static final Pattern EXTRACT_WRONG_TYPE = Pattern.compile("Expected (.*) but found \".*\"");
     static final String ERROR_MESSAGE = "Invalid request content: %s. Please verify the request matches the expected schema for this method.";
 
-    public static A2ARequest<?> parseRequestBody(String body) throws JsonMappingException, JsonProcessingException {
+    public static A2ARequest<?> parseRequestBody(String body, @Nullable String tenant) throws JsonMappingException, JsonProcessingException {
         JsonElement jelement = JsonParser.parseString(body);
         JsonObject jsonRpc = jelement.getAsJsonObject();
         if (!jsonRpc.has("method")) {
@@ -196,52 +196,76 @@ public class JSONRPCUtils {
         String method = jsonRpc.get("method").getAsString();
         JsonElement paramsNode = jsonRpc.get("params");
         try {
-            return parseMethodRequest(version, id, method, paramsNode);
+            return parseMethodRequest(version, id, method, paramsNode, tenant);
         } catch (InvalidParamsError e) {
             throw new InvalidParamsJsonMappingException(Utils.defaultIfNull(e.getMessage(), "Invalid parameters"), id);
         }
     }
 
-    private static A2ARequest<?> parseMethodRequest(String version, Object id, String method, JsonElement paramsNode) throws InvalidParamsError, MethodNotFoundJsonMappingException, JsonProcessingException {
+    private static A2ARequest<?> parseMethodRequest(String version, Object id, String method, JsonElement paramsNode, @Nullable String tenant) throws InvalidParamsError, MethodNotFoundJsonMappingException, JsonProcessingException {
         switch (method) {
             case GET_TASK_METHOD -> {
                 io.a2a.grpc.GetTaskRequest.Builder builder = io.a2a.grpc.GetTaskRequest.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
+                if (tenant != null && !tenant.isBlank() && (builder.getTenant() == null || builder.getTenant().isBlank())) {
+                    builder.setTenant(tenant);
+                }
                 return new GetTaskRequest(version, id, ProtoUtils.FromProto.taskQueryParams(builder));
             }
             case CANCEL_TASK_METHOD -> {
                 io.a2a.grpc.CancelTaskRequest.Builder builder = io.a2a.grpc.CancelTaskRequest.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
+                if (tenant != null && !tenant.isBlank() && (builder.getTenant() == null || builder.getTenant().isBlank())) {
+                    builder.setTenant(tenant);
+                }
                 return new CancelTaskRequest(version, id, ProtoUtils.FromProto.taskIdParams(builder));
             }
             case LIST_TASK_METHOD -> {
                 io.a2a.grpc.ListTasksRequest.Builder builder = io.a2a.grpc.ListTasksRequest.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
+                if (tenant != null && !tenant.isBlank() && (builder.getTenant() == null || builder.getTenant().isBlank())) {
+                    builder.setTenant(tenant);
+                }
                 return new ListTasksRequest(version, id, ProtoUtils.FromProto.listTasksParams(builder));
             }
             case SET_TASK_PUSH_NOTIFICATION_CONFIG_METHOD -> {
-                io.a2a.grpc.SetTaskPushNotificationConfigRequest.Builder builder = io.a2a.grpc.SetTaskPushNotificationConfigRequest.newBuilder();
+                io.a2a.grpc.CreateTaskPushNotificationConfigRequest.Builder builder = io.a2a.grpc.CreateTaskPushNotificationConfigRequest.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
-                return new SetTaskPushNotificationConfigRequest(version, id, ProtoUtils.FromProto.setTaskPushNotificationConfig(builder));
+                if (tenant != null && !tenant.isBlank() && (builder.getTenant() == null || builder.getTenant().isBlank())) {
+                    builder.setTenant(tenant);
+                }
+                return new CreateTaskPushNotificationConfigRequest(version, id, ProtoUtils.FromProto.CreateTaskPushNotificationConfig(builder));
             }
             case GET_TASK_PUSH_NOTIFICATION_CONFIG_METHOD -> {
                 io.a2a.grpc.GetTaskPushNotificationConfigRequest.Builder builder = io.a2a.grpc.GetTaskPushNotificationConfigRequest.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
+                if (tenant != null && !tenant.isBlank() && (builder.getTenant() == null || builder.getTenant().isBlank())) {
+                    builder.setTenant(tenant);
+                }
                 return new GetTaskPushNotificationConfigRequest(version, id, ProtoUtils.FromProto.getTaskPushNotificationConfigParams(builder));
             }
             case SEND_MESSAGE_METHOD -> {
                 io.a2a.grpc.SendMessageRequest.Builder builder = io.a2a.grpc.SendMessageRequest.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
+                if (tenant != null && !tenant.isBlank() && (builder.getTenant() == null || builder.getTenant().isBlank())) {
+                    builder.setTenant(tenant);
+                }
                 return new SendMessageRequest(version, id, ProtoUtils.FromProto.messageSendParams(builder));
             }
             case LIST_TASK_PUSH_NOTIFICATION_CONFIG_METHOD -> {
                 io.a2a.grpc.ListTaskPushNotificationConfigRequest.Builder builder = io.a2a.grpc.ListTaskPushNotificationConfigRequest.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
+                if (tenant != null && !tenant.isBlank() && (builder.getTenant() == null || builder.getTenant().isBlank())) {
+                    builder.setTenant(tenant);
+                }
                 return new ListTaskPushNotificationConfigRequest(version, id, ProtoUtils.FromProto.listTaskPushNotificationConfigParams(builder));
             }
             case DELETE_TASK_PUSH_NOTIFICATION_CONFIG_METHOD -> {
                 io.a2a.grpc.DeleteTaskPushNotificationConfigRequest.Builder builder = io.a2a.grpc.DeleteTaskPushNotificationConfigRequest.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
+                if (tenant != null && !tenant.isBlank() && (builder.getTenant() == null || builder.getTenant().isBlank())) {
+                    builder.setTenant(tenant);
+                }
                 return new DeleteTaskPushNotificationConfigRequest(version, id, ProtoUtils.FromProto.deleteTaskPushNotificationConfigParams(builder));
             }
             case GET_EXTENDED_AGENT_CARD_METHOD -> {
@@ -250,11 +274,17 @@ public class JSONRPCUtils {
             case SEND_STREAMING_MESSAGE_METHOD -> {
                 io.a2a.grpc.SendMessageRequest.Builder builder = io.a2a.grpc.SendMessageRequest.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
+                if (tenant != null && !tenant.isBlank() && (builder.getTenant() == null || builder.getTenant().isBlank())) {
+                    builder.setTenant(tenant);
+                }
                 return new SendStreamingMessageRequest(version, id, ProtoUtils.FromProto.messageSendParams(builder));
             }
             case SUBSCRIBE_TO_TASK_METHOD -> {
                 io.a2a.grpc.SubscribeToTaskRequest.Builder builder = io.a2a.grpc.SubscribeToTaskRequest.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
+                if (tenant != null && !tenant.isBlank() && (builder.getTenant() == null || builder.getTenant().isBlank())) {
+                    builder.setTenant(tenant);
+                }
                 return new SubscribeToTaskRequest(version, id, ProtoUtils.FromProto.taskIdParams(builder));
             }
             default ->
@@ -304,7 +334,7 @@ public class JSONRPCUtils {
             case SET_TASK_PUSH_NOTIFICATION_CONFIG_METHOD -> {
                 io.a2a.grpc.TaskPushNotificationConfig.Builder builder = io.a2a.grpc.TaskPushNotificationConfig.newBuilder();
                 parseRequestBody(paramsNode, builder, id);
-                return new SetTaskPushNotificationConfigResponse(id, ProtoUtils.FromProto.taskPushNotificationConfig(builder));
+                return new CreateTaskPushNotificationConfigResponse(id, ProtoUtils.FromProto.taskPushNotificationConfig(builder));
             }
             case GET_TASK_PUSH_NOTIFICATION_CONFIG_METHOD -> {
                 io.a2a.grpc.TaskPushNotificationConfig.Builder builder = io.a2a.grpc.TaskPushNotificationConfig.newBuilder();
@@ -350,7 +380,7 @@ public class JSONRPCUtils {
                 return new ListTasksResponse(id, rpcError);
             }
             case SET_TASK_PUSH_NOTIFICATION_CONFIG_METHOD -> {
-                return new SetTaskPushNotificationConfigResponse(id, rpcError);
+                return new CreateTaskPushNotificationConfigResponse(id, rpcError);
             }
             case GET_TASK_PUSH_NOTIFICATION_CONFIG_METHOD -> {
                 return new GetTaskPushNotificationConfigResponse(id, rpcError);
@@ -404,10 +434,10 @@ public class JSONRPCUtils {
                 case TASK_NOT_FOUND_ERROR_CODE:
                     return new TaskNotFoundError(code, message, data);
                 default:
-                    return new A2AError(code, message, data);
+                    return new A2AError(code, message == null ? "": message, data);
             }
         }
-        return new A2AError(code, message, data);
+        return new A2AError(INTERNAL_ERROR_CODE, message == null ? "": message, data);
     }
 
     protected static void parseRequestBody(JsonElement jsonRpc, com.google.protobuf.Message.Builder builder, Object id) throws JsonProcessingException {
@@ -459,7 +489,7 @@ public class JSONRPCUtils {
         }
 
         // Extract field name if present in error message - check common prefixes
-        String[] prefixes = {"Cannot find field: ", "Invalid value for", "Invalid enum value:"};
+        String[] prefixes = {"Cannot find field: ", "Invalid value for", "Invalid enum value:", "Failed to parse"};
         for (String prefix : prefixes) {
             if (message.contains(prefix)) {
                 return new InvalidParamsJsonMappingException(ERROR_MESSAGE.formatted(message.substring(message.indexOf(prefix) + prefix.length())), id);

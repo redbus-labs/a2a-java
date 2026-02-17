@@ -185,6 +185,30 @@ public class A2ATestRoutes {
         }
     }
 
+    /**
+     * REST endpoint to wait for child queue count to stabilize.
+     * Waits for the specified task's child queue count to match expectedCount for 3 consecutive
+     * checks (150ms total), ensuring EventConsumer polling loops have started.
+     *
+     * @param taskId the task ID whose child queues to monitor
+     * @param expectedCountStr the expected number of active child queues (as string)
+     * @param timeoutMsStr maximum time to wait in milliseconds (as string)
+     * @param rc the Vert.x routing context
+     */
+    @Route(path = "/test/queue/awaitChildCountStable/:taskId/:expectedCount/:timeoutMs", methods = {Route.HttpMethod.POST}, type = Route.HandlerType.BLOCKING)
+    public void awaitChildQueueCountStable(@Param("taskId") String taskId, @Param("expectedCount") String expectedCountStr, @Param("timeoutMs") String timeoutMsStr, RoutingContext rc) {
+        try {
+            int expectedCount = Integer.parseInt(expectedCountStr);
+            long timeoutMs = Long.parseLong(timeoutMsStr);
+            boolean stable = testUtilsBean.awaitChildQueueCountStable(taskId, expectedCount, timeoutMs);
+            rc.response()
+                    .setStatusCode(200)
+                    .end(String.valueOf(stable));
+        } catch (Throwable t) {
+            errorResponse(t, rc);
+        }
+    }
+
     private void errorResponse(Throwable t, RoutingContext rc) {
         t.printStackTrace();
         rc.response()
