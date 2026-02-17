@@ -50,11 +50,22 @@ public class DatabaseInitializer {
     private static void createTable(Connection conn) throws Exception {
         String sql = "CREATE TABLE IF NOT EXISTS a2a_tasks (" +
                      "task_id VARCHAR(255) PRIMARY KEY, " +
+                     "context_id VARCHAR(255), " +
+                     "state VARCHAR(50), " +
+                     "status_timestamp TIMESTAMP, " +
+                     "finalized_at TIMESTAMP, " +
                      "task_data TEXT NOT NULL" +
                      ")";
         try (Statement stmt = conn.createStatement()) {
             stmt.execute(sql);
             System.out.println("Verified table 'a2a_tasks'. Created if missing.");
+        }
+
+        // Also add index creation
+        String indexSql = "CREATE INDEX IF NOT EXISTS idx_a2a_tasks_context_id ON a2a_tasks(context_id)";
+        try (Statement stmt = conn.createStatement()) {
+            stmt.execute(indexSql);
+            System.out.println("Verified index 'idx_a2a_tasks_context_id'.");
         }
     }
 }
