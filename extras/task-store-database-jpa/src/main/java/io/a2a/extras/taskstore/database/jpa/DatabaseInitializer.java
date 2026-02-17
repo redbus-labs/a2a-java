@@ -12,14 +12,24 @@ import java.time.Instant;
  * This class handles:
  * 1. Creation of 'a2a_tasks' table if it does not exist.
  * 2. Insertion of a sample task record.
+ *
+ * <p>Configuration via Environment Variables:
+ * <ul>
+ *   <li>{@code DB_URL}: JDBC URL (default: {@code jdbc:postgresql://localhost:5432/a2a_db})</li>
+ *   <li>{@code DB_USER}: Database User (default: {@code a2a})</li>
+ *   <li>{@code DB_PASSWORD}: Database Password (default: {@code a2a})</li>
+ * </ul>
  * 
  * IMPORTANT: No deletion logic is implemented here to ensure data safety.
+ *
+ * @author Sandeep Belgavi
+ * @since 2026-02-17
  */
 public class DatabaseInitializer {
 
-    private static final String JDBC_URL = "jdbc:postgresql://localhost:5432/a2a_db";
-    private static final String USER = "a2a";
-    private static final String PASS = "a2a";
+    private static final String JDBC_URL = System.getenv().getOrDefault("DB_URL", "jdbc:postgresql://localhost:5432/a2a_db");
+    private static final String USER = System.getenv().getOrDefault("DB_USER", "a2a");
+    private static final String PASS = System.getenv().getOrDefault("DB_PASSWORD", "a2a");
 
     public static void main(String[] args) {
         System.out.println("Starting Database Initialization...");
