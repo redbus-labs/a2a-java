@@ -13,7 +13,9 @@ import io.a2a.jsonrpc.common.json.JsonUtil;
 import io.a2a.spec.Task;
 
 @Entity
-@Table(name = "a2a_tasks")
+@Table(name = "a2a_tasks", indexes = {
+    @jakarta.persistence.Index(name = "idx_a2a_tasks_context_id", columnList = "context_id")
+})
 public class JpaTask {
     @Id
     @Column(name = "task_id")
@@ -22,7 +24,7 @@ public class JpaTask {
     @Column(name = "context_id")
     private String contextId;
 
-    @Column(name = "state")
+    @Column(name = "state", length = 50)
     private String state;
 
     @Column(name = "status_timestamp")
