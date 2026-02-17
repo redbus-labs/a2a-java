@@ -2,16 +2,12 @@ package io.a2a.extras.taskstore.database.jpa;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.PreparedStatement;
 import java.sql.Statement;
-import java.util.UUID;
-import java.time.Instant;
 
 /**
- * Utility class to initialize the database schema and insert sample data.
+ * Utility class to initialize the database schema.
  * This class handles:
  * 1. Creation of 'a2a_tasks' table if it does not exist.
- * 2. Insertion of a sample task record.
  *
  * <p>Configuration via Environment Variables:
  * <ul>
@@ -20,8 +16,6 @@ import java.time.Instant;
  *   <li>{@code DB_PASSWORD}: Database Password (default: {@code a2a})</li>
  * </ul>
  * 
- * IMPORTANT: No deletion logic is implemented here to ensure data safety.
- *
  * @author Sandeep Belgavi
  * @since 2026-02-17
  */
@@ -40,9 +34,6 @@ public class DatabaseInitializer {
             try (Connection conn = DriverManager.getConnection(JDBC_URL, USER, PASS)) {
                 // 1. Create Table
                 createTable(conn);
-
-                // 2. Insert Sample Data
-                insertSampleTask(conn);
             }
             
             System.out.println("Database Initialization Completed Successfully.");
@@ -64,25 +55,6 @@ public class DatabaseInitializer {
         try (Statement stmt = conn.createStatement()) {
             stmt.execute(sql);
             System.out.println("Verified table 'a2a_tasks'. Created if missing.");
-        }
-    }
-
-    private static void insertSampleTask(Connection conn) throws Exception {
-        String taskId = UUID.randomUUID().toString();
-        // Sample JSON structure for task data
-        String taskData = String.format("{\"status\": \"SUBMITTED\", \"created_at\": \"%s\", \"description\": \"Sample initialization task\"}", Instant.now());
-        
-        String sql = "INSERT INTO a2a_tasks (task_id, task_data) VALUES (?, ?) ON CONFLICT (task_id) DO NOTHING";
-        
-        try (PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setString(1, taskId);
-            stmt.setString(2, taskData);
-            int rows = stmt.executeUpdate();
-            if (rows > 0) {
-                System.out.println("Inserted sample task: " + taskId);
-            } else {
-                System.out.println("Sample task insertion skipped (conflict or no-op).");
-            }
         }
     }
 }
