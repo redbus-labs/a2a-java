@@ -7,8 +7,7 @@ import jakarta.enterprise.inject.Produces;
 
 import io.a2a.server.agentexecution.AgentExecutor;
 import io.a2a.server.agentexecution.RequestContext;
-import io.a2a.server.events.EventQueue;
-import io.a2a.server.tasks.TaskUpdater;
+import io.a2a.server.tasks.AgentEmitter;
 import io.a2a.spec.A2AError;
 import io.a2a.spec.InvalidParamsError;
 import io.a2a.spec.Message;
@@ -25,23 +24,22 @@ public class AgentExecutorProducer {
     public AgentExecutor agentExecutor() {
         return new AgentExecutor() {
             @Override
-            public void execute(RequestContext context, EventQueue eventQueue) throws A2AError {
-                TaskUpdater updater = new TaskUpdater(context, eventQueue);
+            public void execute(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
                 String taskId = context.getTaskId();
 
                 // Special handling for multi-event test
                 if (taskId != null && taskId.startsWith("multi-event-test")) {
                     // First call: context.getTask() == null (new task)
                     if (context.getTask() == null) {
-                        updater.startWork();
+                        agentEmitter.startWork();
                         // Return immediately - queue stays open because task is in WORKING state
                         return;
                     } else {
                         // Second call: context.getTask() != null (existing task)
-                        updater.addArtifact(
+                        agentEmitter.addArtifact(
                             List.of(new TextPart("Second message artifact")),
                             "artifact-2", "Second Artifact", null);
-                        updater.complete();
+                        agentEmitter.complete();
                         return;
                     }
                 }
@@ -50,8 +48,8 @@ public class AgentExecutorProducer {
                 if (taskId != null && taskId.startsWith("input-required-test")) {
                     // First call: context.getTask() == null (new task)
                     if (context.getTask() == null) {
-                        updater.startWork();
-                        updater.requiresInput(updater.newAgentMessage(
+                        agentEmitter.startWork();
+                        agentEmitter.requiresInput(agentEmitter.newAgentMessage(
                                 List.of(new TextPart("Please provide additional information")),
                                 context.getMessage().metadata()));
                         // Return immediately - queue stays open because task is in INPUT_REQUIRED state
@@ -62,23 +60,26 @@ public class AgentExecutorProducer {
                             throw new InvalidParamsError("We didn't get the expected input");
                         }
                         // Second call: context.getTask() != null (input provided)
-                        updater.startWork();
-                        updater.complete();
+                        agentEmitter.startWork();
+                        agentEmitter.complete();
                         return;
                     }
                 }
 
                 if (context.getTaskId().equals("task-not-supported-123")) {
-                    eventQueue.enqueueEvent(new UnsupportedOperationError());
+                    throw new UnsupportedOperationError();
                 }
-                eventQueue.enqueueEvent(context.getMessage() != null ? context.getMessage() : context.getTask());
+                if (context.getMessage() != null) {
+                    agentEmitter.sendMessage(context.getMessage());
+                } else {
+                    agentEmitter.addTask(context.getTask());
+                }
             }
 
             @Override
-            public void cancel(RequestContext context, EventQueue eventQueue) throws A2AError {
+            public void cancel(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
                 if (context.getTask().id().equals("cancel-task-123")) {
-                    TaskUpdater taskUpdater = new TaskUpdater(context, eventQueue);
-                    taskUpdater.cancel();
+                    agentEmitter.cancel();
                 } else if (context.getTask().id().equals("cancel-task-not-supported-123")) {
                     throw new UnsupportedOperationError();
                 }

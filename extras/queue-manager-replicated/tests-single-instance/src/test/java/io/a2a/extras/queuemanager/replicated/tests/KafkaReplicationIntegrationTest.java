@@ -30,7 +30,9 @@ import io.a2a.client.transport.jsonrpc.JSONRPCTransportConfigBuilder;
 import io.a2a.extras.queuemanager.replicated.core.ReplicatedEventQueueItem;
 import io.a2a.jsonrpc.common.json.JsonUtil;
 import io.a2a.server.PublicAgentCard;
+import io.a2a.server.events.EventQueue;
 import io.a2a.server.events.QueueClosedEvent;
+import io.a2a.server.events.QueueManager;
 import io.a2a.spec.A2AClientException;
 import io.a2a.spec.AgentCard;
 import io.a2a.spec.Message;
@@ -46,6 +48,8 @@ import org.eclipse.microprofile.reactive.messaging.Emitter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Integration test for Kafka replication functionality.
@@ -53,6 +57,8 @@ import org.junit.jupiter.api.Test;
  */
 @QuarkusTest
 public class KafkaReplicationIntegrationTest {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(KafkaReplicationIntegrationTest.class);
 
     @Inject
     @PublicAgentCard
@@ -64,6 +70,9 @@ public class KafkaReplicationIntegrationTest {
     @Inject
     @Channel("replicated-events-out")
     Emitter<String> testEmitter;
+
+    @Inject
+    QueueManager queueManager;
 
     private Client streamingClient;
     private Client nonStreamingClient;
@@ -218,18 +227,30 @@ public class KafkaReplicationIntegrationTest {
         Thread.sleep(1000);
 
         // Set up resubscription to listen for task updates using streaming client
-        CountDownLatch resubscribeLatch = new CountDownLatch(1);
+        CountDownLatch subscribeLatch = new CountDownLatch(1);
         AtomicReference<TaskStatusUpdateEvent> receivedCompletedEvent = new AtomicReference<>();
         AtomicBoolean wasUnexpectedEvent = new AtomicBoolean(false);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
+        AtomicBoolean receivedInitialTask = new AtomicBoolean(false);
 
-        // Create consumer to handle resubscribed events
+        // Create consumer to handle subscribed events
         BiConsumer<ClientEvent, AgentCard> consumer = (event, agentCard) -> {
+            // Per A2A spec 3.1.6: ENFORCE that first event is TaskEvent
+            if (!receivedInitialTask.get()) {
+                if (event instanceof TaskEvent) {
+                    receivedInitialTask.set(true);
+                    return;
+                } else {
+                    throw new AssertionError("First event on subscribe MUST be TaskEvent, but was: " + event.getClass().getSimpleName());
+                }
+            }
+
+            // Process subsequent events
             if (event instanceof TaskUpdateEvent taskUpdateEvent) {
                 if (taskUpdateEvent.getUpdateEvent() instanceof TaskStatusUpdateEvent statusEvent) {
                     if (statusEvent.status().state() == TaskState.COMPLETED) {
                         receivedCompletedEvent.set(statusEvent);
-                        resubscribeLatch.countDown();
+                        subscribeLatch.countDown();
                     }
                 } else {
                     wasUnexpectedEvent.set(true);
@@ -246,18 +267,17 @@ public class KafkaReplicationIntegrationTest {
             if (!isStreamClosedError(error)) {
                 errorRef.set(error);
             }
-            resubscribeLatch.countDown();
+            subscribeLatch.countDown();
         };
 
-        // Resubscribe to the task to listen for updates
-        streamingClient.resubscribe(new TaskIdParams(taskId), List.of(consumer), errorHandler);
+        // Subscribe to the task to listen for updates
+        streamingClient.subscribeToTask(new TaskIdParams(taskId), List.of(consumer), errorHandler);
 
         // Now manually send a TaskStatusUpdateEvent to Kafka using reactive messaging
         TaskStatusUpdateEvent statusEvent = TaskStatusUpdateEvent.builder()
                 .taskId(taskId)
                 .contextId(contextId)
                 .status(new TaskStatus(TaskState.COMPLETED))
-                .isFinal(true)
                 .build();
 
         ReplicatedEventQueueItem replicatedEvent = new ReplicatedEventQueueItem(taskId, statusEvent);
@@ -268,7 +288,7 @@ public class KafkaReplicationIntegrationTest {
 
         // Wait for the replicated event to be received via streaming resubscription
         // This tests the full round-trip: Manual Kafka Event -> A2A System -> Streaming Client
-        assertTrue(resubscribeLatch.await(15, TimeUnit.SECONDS), "Should receive COMPLETED event via resubscription");
+        assertTrue(subscribeLatch.await(15, TimeUnit.SECONDS), "Should receive COMPLETED event via resubscription");
 
         // Verify no unexpected events or errors
         assertFalse(wasUnexpectedEvent.get(), "Should not receive unexpected events");
@@ -352,11 +372,14 @@ public class KafkaReplicationIntegrationTest {
             streamCompletedLatch.countDown();
         };
 
-        // Resubscribe to the task - this creates a streaming subscription
-        streamingClient.resubscribe(new TaskIdParams(taskId), List.of(consumer), errorHandler);
+        // Subscribe to the task - this creates a streaming subscription
+        streamingClient.subscribeToTask(new TaskIdParams(taskId), List.of(consumer), errorHandler);
 
-        // Wait a moment to ensure the streaming subscription is fully established
-        Thread.sleep(2000);
+        // Wait for the EventConsumer to start polling (replaces unreliable Thread.sleep)
+        // This ensures the consumer is ready to receive the QueueClosedEvent
+        EventQueue queue = queueManager.get(taskId);
+        assertNotNull(queue, "Queue should exist for task " + taskId);
+        queueManager.awaitQueuePollerStart(queue);
 
         // Now manually send a QueueClosedEvent to Kafka to simulate queue closure on another node
         QueueClosedEvent closedEvent = new QueueClosedEvent(taskId);
@@ -372,6 +395,10 @@ public class KafkaReplicationIntegrationTest {
                 "Streaming subscription should complete when QueueClosedEvent is received");
 
         // Verify the stream completed normally (not with an error)
+        if (!streamCompleted.get()) {
+            LOGGER.error("Stream did not complete normally! streamErrored={}, errorRef={}",
+                    streamErrored.get(), errorRef.get(), errorRef.get());
+        }
         assertTrue(streamCompleted.get(), "Stream should complete normally when QueueClosedEvent is received");
         assertFalse(streamErrored.get(), "Stream should not error on QueueClosedEvent");
         assertNull(errorRef.get(), "Should not receive error when stream completes gracefully");

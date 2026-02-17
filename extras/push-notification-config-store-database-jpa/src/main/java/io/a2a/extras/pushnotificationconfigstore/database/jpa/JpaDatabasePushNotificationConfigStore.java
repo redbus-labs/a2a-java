@@ -164,4 +164,5 @@ public class JpaDatabasePushNotificationConfigStore implements PushNotificationC
                     taskId, configId);
         }
     }
+
 }

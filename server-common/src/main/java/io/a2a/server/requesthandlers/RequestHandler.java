@@ -39,7 +39,7 @@ public interface RequestHandler {
             MessageSendParams params,
             ServerCallContext context) throws A2AError;
 
-    TaskPushNotificationConfig onSetTaskPushNotificationConfig(
+    TaskPushNotificationConfig onCreateTaskPushNotificationConfig(
             TaskPushNotificationConfig params,
             ServerCallContext context) throws A2AError;
 
@@ -47,7 +47,7 @@ public interface RequestHandler {
             GetTaskPushNotificationConfigParams params,
             ServerCallContext context) throws A2AError;
 
-    Flow.Publisher<StreamingEventKind> onResubscribeToTask(
+    Flow.Publisher<StreamingEventKind> onSubscribeToTask(
             TaskIdParams params,
             ServerCallContext context) throws A2AError;
 

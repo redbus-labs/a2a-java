@@ -2,8 +2,7 @@ package io.a2a.extras.queuemanager.replicated.tests.multiinstance.common;
 
 import io.a2a.server.agentexecution.AgentExecutor;
 import io.a2a.server.agentexecution.RequestContext;
-import io.a2a.server.events.EventQueue;
-import io.a2a.server.tasks.TaskUpdater;
+import io.a2a.server.tasks.AgentEmitter;
 import io.a2a.spec.A2AError;
 import io.a2a.spec.Task;
 import io.a2a.spec.TextPart;
@@ -18,9 +17,8 @@ import io.a2a.spec.TextPart;
  */
 public class MultiInstanceReplicationAgentExecutor implements AgentExecutor {
     @Override
-    public void execute(RequestContext context, EventQueue eventQueue) throws A2AError {
+    public void execute(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
         Task task = context.getTask();
-        TaskUpdater updater = new TaskUpdater(context, eventQueue);
 
         // Check if message contains "close" signal
         boolean shouldClose = context.getMessage().parts().stream()
@@ -30,19 +28,18 @@ public class MultiInstanceReplicationAgentExecutor implements AgentExecutor {
 
         if (shouldClose) {
             // Close the task
-            updater.complete();
+            agentEmitter.complete();
         } else if (task == null) {
             // First message - create task in SUBMITTED state
-            updater.submit();
+            agentEmitter.submit();
         } else {
             // Subsequent messages - add as artifact
-            updater.addArtifact(context.getMessage().parts());
+            agentEmitter.addArtifact(context.getMessage().parts());
         }
     }
 
     @Override
-    public void cancel(RequestContext context, EventQueue eventQueue) throws A2AError {
-        TaskUpdater updater = new TaskUpdater(context, eventQueue);
-        updater.cancel();
+    public void cancel(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
+        agentEmitter.cancel();
     }
 }

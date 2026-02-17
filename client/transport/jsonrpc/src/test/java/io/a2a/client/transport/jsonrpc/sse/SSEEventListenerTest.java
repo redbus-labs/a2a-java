@@ -184,12 +184,15 @@ public class SSEEventListenerTest {
 
     @Test
     public void testFinalTaskStatusUpdateEventCancels() {
-        TaskStatusUpdateEvent tsue = TaskStatusUpdateEvent.builder()
-                .taskId("1234")
-                .contextId("xyz")
-                .status(new TaskStatus(TaskState.COMPLETED))
-                .isFinal(true)
-                .build();
+        TaskStatus completedStatus = new TaskStatus(TaskState.COMPLETED);
+        // Use constructor since Builder doesn't have isFinal method
+        TaskStatusUpdateEvent tsue = new TaskStatusUpdateEvent(
+                "1234",
+                completedStatus,
+                "xyz",
+                completedStatus.state().isFinal(),  // Derive from state
+                null
+        );
 
         // Set up event handler
         AtomicReference<StreamingEventKind> receivedEvent = new AtomicReference<>();
@@ -198,7 +201,22 @@ public class SSEEventListenerTest {
                 error -> {}
         );
 
+        // Parse the message event JSON
+        String eventData = JsonStreamingMessages.STREAMING_STATUS_UPDATE_EVENT_FINAL.substring(
+                JsonStreamingMessages.STREAMING_STATUS_UPDATE_EVENT_FINAL.indexOf("{"));
 
+        // Call onMessage with a cancellable future
+        CancelCapturingFuture future = new CancelCapturingFuture();
+        listener.onMessage(eventData, future);
+
+        // Verify the event was received and processed
+        assertNotNull(receivedEvent.get());
+        assertTrue(receivedEvent.get() instanceof TaskStatusUpdateEvent);
+        TaskStatusUpdateEvent received = (TaskStatusUpdateEvent) receivedEvent.get();
+        assertTrue(received.isFinal());
+
+        // Verify the future was cancelled (auto-close on final event)
+        assertTrue(future.cancelHandlerCalled);
     }
 
     @Test

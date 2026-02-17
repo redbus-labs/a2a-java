@@ -137,4 +137,40 @@ public class A2ATestResource {
         testUtilsBean.saveTaskPushNotificationConfig(taskId, notificationConfig);
         return Response.ok().build();
     }
+
+    /**
+     * REST endpoint to wait for queue poller to start.
+     * Waits for the EventConsumer polling loop to start for the specified task's queue,
+     * ensuring the queue is ready to receive and process events.
+     *
+     * @param taskId the task ID whose queue poller to wait for
+     * @return HTTP 200 response when poller has started
+     * @throws InterruptedException if interrupted while waiting
+     */
+    @POST
+    @Path("/queue/awaitPollerStart/{taskId}")
+    public Response awaitQueuePollerStart(@PathParam("taskId") String taskId) throws InterruptedException {
+        testUtilsBean.awaitQueuePollerStart(taskId);
+        return Response.ok().build();
+    }
+
+    /**
+     * REST endpoint to wait for child queue count to stabilize.
+     * Waits for the specified task's child queue count to match expectedCount for 3 consecutive
+     * checks (150ms total), ensuring EventConsumer polling loops have started.
+     *
+     * @param taskId the task ID whose child queues to monitor
+     * @param expectedCount the expected number of active child queues
+     * @param timeoutMs maximum time to wait in milliseconds
+     * @return HTTP 200 response with "true" if count stabilized, "false" if timeout occurred
+     * @throws InterruptedException if interrupted while waiting
+     */
+    @POST
+    @Path("/queue/awaitChildCountStable/{taskId}/{expectedCount}/{timeoutMs}")
+    public Response awaitChildQueueCountStable(@PathParam("taskId") String taskId,
+                                               @PathParam("expectedCount") int expectedCount,
+                                               @PathParam("timeoutMs") long timeoutMs) throws InterruptedException {
+        boolean stable = testUtilsBean.awaitChildQueueCountStable(taskId, expectedCount, timeoutMs);
+        return Response.ok(String.valueOf(stable), TEXT_PLAIN).build();
+    }
 }

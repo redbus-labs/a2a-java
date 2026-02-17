@@ -2,6 +2,7 @@ package io.a2a.server.apps.quarkus;
 
 import static io.a2a.transport.jsonrpc.context.JSONRPCContextKeys.HEADERS_KEY;
 import static io.a2a.transport.jsonrpc.context.JSONRPCContextKeys.METHOD_NAME_KEY;
+import static io.a2a.transport.jsonrpc.context.JSONRPCContextKeys.TENANT_KEY;
 import static io.vertx.core.http.HttpHeaders.CONTENT_TYPE;
 import static jakarta.ws.rs.core.MediaType.APPLICATION_JSON;
 import static jakarta.ws.rs.core.MediaType.SERVER_SENT_EVENTS;
@@ -13,7 +14,6 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Flow;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Function;
 
 import jakarta.enterprise.inject.Instance;
 import jakarta.inject.Inject;
@@ -21,6 +21,7 @@ import jakarta.inject.Singleton;
 
 import com.google.gson.JsonSyntaxException;
 import io.a2a.common.A2AHeaders;
+import io.a2a.server.util.sse.SseFormatter;
 import io.a2a.grpc.utils.JSONRPCUtils;
 import io.a2a.jsonrpc.common.json.IdJsonMappingException;
 import io.a2a.jsonrpc.common.json.InvalidParamsJsonMappingException;
@@ -50,8 +51,8 @@ import io.a2a.jsonrpc.common.wrappers.SendMessageRequest;
 import io.a2a.jsonrpc.common.wrappers.SendMessageResponse;
 import io.a2a.jsonrpc.common.wrappers.SendStreamingMessageRequest;
 import io.a2a.jsonrpc.common.wrappers.SendStreamingMessageResponse;
-import io.a2a.jsonrpc.common.wrappers.SetTaskPushNotificationConfigRequest;
-import io.a2a.jsonrpc.common.wrappers.SetTaskPushNotificationConfigResponse;
+import io.a2a.jsonrpc.common.wrappers.CreateTaskPushNotificationConfigRequest;
+import io.a2a.jsonrpc.common.wrappers.CreateTaskPushNotificationConfigResponse;
 import io.a2a.jsonrpc.common.wrappers.SubscribeToTaskRequest;
 import io.a2a.server.ServerCallContext;
 import io.a2a.server.auth.UnauthenticatedUser;
@@ -65,7 +66,6 @@ import io.a2a.spec.UnsupportedOperationError;
 import io.a2a.transport.jsonrpc.handler.JSONRPCHandler;
 import io.quarkus.security.Authenticated;
 import io.quarkus.vertx.web.Body;
-import io.quarkus.vertx.web.ReactiveRoutes;
 import io.quarkus.vertx.web.Route;
 import io.smallrye.mutiny.Multi;
 import io.vertx.core.AsyncResult;
@@ -74,6 +74,8 @@ import io.vertx.core.MultiMap;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.HttpServerResponse;
 import io.vertx.ext.web.RoutingContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Singleton
 public class A2AServerRoutes {
@@ -101,7 +103,7 @@ public class A2AServerRoutes {
         Multi<? extends A2AResponse<?>> streamingResponse = null;
         A2AErrorResponse error = null;
         try {
-            A2ARequest<?> request = JSONRPCUtils.parseRequestBody(body);
+            A2ARequest<?> request = JSONRPCUtils.parseRequestBody(body, extractTenant(rc));
             context.getState().put(METHOD_NAME_KEY, request.getMethod());
             if (request instanceof NonStreamingJSONRPCRequest nonStreamingRequest) {
                 nonStreamingResponse = processNonStreamingRequest(nonStreamingRequest, context);
@@ -135,8 +137,12 @@ public class A2AServerRoutes {
             } else if (streaming) {
                 final Multi<? extends A2AResponse<?>> finalStreamingResponse = streamingResponse;
                 executor.execute(() -> {
-                    MultiSseSupport.subscribeObject(
-                            finalStreamingResponse.map(i -> (Object) i), rc);
+                    // Convert Multi<A2AResponse> to Multi<String> with SSE formatting
+                    AtomicLong eventIdCounter = new AtomicLong(0);
+                    Multi<String> sseEvents = finalStreamingResponse
+                            .map(response -> SseFormatter.formatResponseAsSSE(response, eventIdCounter.getAndIncrement()));
+                    // Write SSE-formatted strings to HTTP response
+                    MultiSseSupport.writeSseStrings(sseEvents, rc, context);
                 });
 
             } else {
@@ -170,7 +176,7 @@ public class A2AServerRoutes {
         if (request instanceof ListTasksRequest req) {
             return jsonRpcHandler.onListTasks(req, context);
         }
-        if (request instanceof SetTaskPushNotificationConfigRequest req) {
+        if (request instanceof CreateTaskPushNotificationConfigRequest req) {
             return jsonRpcHandler.setPushNotificationConfig(req, context);
         }
         if (request instanceof GetTaskPushNotificationConfigRequest req) {
@@ -213,7 +219,6 @@ public class A2AServerRoutes {
     }
 
     private ServerCallContext createCallContext(RoutingContext rc) {
-
         if (callContextFactory.isUnsatisfied()) {
             User user;
             if (rc.user() == null) {
@@ -240,6 +245,7 @@ public class A2AServerRoutes {
             Set<String> headerNames = rc.request().headers().names();
             headerNames.forEach(name -> headers.put(name, rc.request().getHeader(name)));
             state.put(HEADERS_KEY, headers);
+            state.put(TENANT_KEY, extractTenant(rc));
 
             // Extract requested protocol version from X-A2A-Version header
             String requestedVersion = rc.request().getHeader(A2AHeaders.X_A2A_VERSION);
@@ -253,6 +259,20 @@ public class A2AServerRoutes {
             CallContextFactory builder = callContextFactory.get();
             return builder.build(rc);
         }
+    }
+
+    private String extractTenant(RoutingContext rc) {
+        String tenantPath = rc.normalizedPath();
+        if (tenantPath == null || tenantPath.isBlank()) {
+            return "";
+        }
+        if (tenantPath.startsWith("/")) {
+            tenantPath = tenantPath.substring(1);
+        }
+        if(tenantPath.endsWith("/")) {
+            tenantPath = tenantPath.substring(0, tenantPath.length() -1);
+        }
+        return tenantPath;
     }
 
     private static String serializeResponse(A2AResponse<?> response) {
@@ -277,8 +297,8 @@ public class A2AServerRoutes {
             return io.a2a.grpc.utils.ProtoUtils.ToProto.taskOrMessage(r.getResult());
         } else if (response instanceof ListTasksResponse r) {
             return io.a2a.grpc.utils.ProtoUtils.ToProto.listTasksResult(r.getResult());
-        } else if (response instanceof SetTaskPushNotificationConfigResponse r) {
-            return io.a2a.grpc.utils.ProtoUtils.ToProto.setTaskPushNotificationConfigResponse(r.getResult());
+        } else if (response instanceof CreateTaskPushNotificationConfigResponse r) {
+            return io.a2a.grpc.utils.ProtoUtils.ToProto.createTaskPushNotificationConfigResponse(r.getResult());
         } else if (response instanceof GetTaskPushNotificationConfigResponse r) {
             return io.a2a.grpc.utils.ProtoUtils.ToProto.getTaskPushNotificationConfigResponse(r.getResult());
         } else if (response instanceof ListTaskPushNotificationConfigResponse r) {
@@ -295,40 +315,43 @@ public class A2AServerRoutes {
         }
     }
 
-    // Port of import io.quarkus.vertx.web.runtime.MultiSseSupport, which is considered internal API
+    /**
+     * Simplified SSE support for Vert.x/Quarkus.
+     * <p>
+     * This class only handles HTTP-specific concerns (writing to response, backpressure, disconnect).
+     * SSE formatting and JSON serialization are handled by {@link SseFormatter}.
+     */
     private static class MultiSseSupport {
+        private static final Logger logger = LoggerFactory.getLogger(MultiSseSupport.class);
 
         private MultiSseSupport() {
             // Avoid direct instantiation.
         }
 
-        private static void initialize(HttpServerResponse response) {
-            if (response.bytesWritten() == 0) {
-                MultiMap headers = response.headers();
-                if (headers.get(CONTENT_TYPE) == null) {
-                    headers.set(CONTENT_TYPE, SERVER_SENT_EVENTS);
-                }
-                response.setChunked(true);
-            }
-        }
-
-        private static void onWriteDone(Flow.Subscription subscription, AsyncResult<Void> ar, RoutingContext rc) {
-            if (ar.failed()) {
-                rc.fail(ar.cause());
-            } else {
-                subscription.request(1);
-            }
-        }
-
-        public static void write(Multi<Buffer> multi, RoutingContext rc) {
+        /**
+         * Write SSE-formatted strings to HTTP response.
+         *
+         * @param sseStrings Multi stream of SSE-formatted strings (from SseFormatter)
+         * @param rc         Vert.x routing context
+         * @param context    A2A server call context (for EventConsumer cancellation)
+         */
+        public static void writeSseStrings(Multi<String> sseStrings, RoutingContext rc, ServerCallContext context) {
             HttpServerResponse response = rc.response();
-            multi.subscribe().withSubscriber(new Flow.Subscriber<Buffer>() {
+
+            sseStrings.subscribe().withSubscriber(new Flow.Subscriber<String>() {
                 Flow.Subscription upstream;
 
                 @Override
                 public void onSubscribe(Flow.Subscription subscription) {
                     this.upstream = subscription;
                     this.upstream.request(1);
+
+                    // Detect client disconnect and call EventConsumer.cancel() directly
+                    response.closeHandler(v -> {
+                        logger.info("SSE connection closed by client, calling EventConsumer.cancel() to stop polling loop");
+                        context.invokeEventConsumerCancelCallback();
+                        subscription.cancel();
+                    });
 
                     // Notify tests that we are subscribed
                     Runnable runnable = streamingMultiSseSupportSubscribedRunnable;
@@ -338,54 +361,50 @@ public class A2AServerRoutes {
                 }
 
                 @Override
-                public void onNext(Buffer item) {
-                    initialize(response);
-                    response.write(item, new Handler<AsyncResult<Void>>() {
+                public void onNext(String sseEvent) {
+                    // Set SSE headers on first event
+                    if (response.bytesWritten() == 0) {
+                        MultiMap headers = response.headers();
+                        if (headers.get(CONTENT_TYPE) == null) {
+                            headers.set(CONTENT_TYPE, SERVER_SENT_EVENTS);
+                        }
+                        response.setChunked(true);
+                    }
+
+                    // Write SSE-formatted string to response
+                    response.write(Buffer.buffer(sseEvent), new Handler<AsyncResult<Void>>() {
                         @Override
                         public void handle(AsyncResult<Void> ar) {
-                            onWriteDone(upstream, ar, rc);
+                            if (ar.failed()) {
+                                // Client disconnected or write failed - cancel upstream to stop EventConsumer
+                                upstream.cancel();
+                                rc.fail(ar.cause());
+                            } else {
+                                upstream.request(1);
+                            }
                         }
                     });
                 }
 
                 @Override
                 public void onError(Throwable throwable) {
+                    // Cancel upstream to stop EventConsumer when error occurs
+                    upstream.cancel();
                     rc.fail(throwable);
                 }
 
                 @Override
                 public void onComplete() {
-                    endOfStream(response);
+                    if (response.bytesWritten() == 0) {
+                        // No events written - still set SSE content type
+                        MultiMap headers = response.headers();
+                        if (headers.get(CONTENT_TYPE) == null) {
+                            headers.set(CONTENT_TYPE, SERVER_SENT_EVENTS);
+                        }
+                    }
+                    response.end();
                 }
             });
-        }
-
-        public static void subscribeObject(Multi<Object> multi, RoutingContext rc) {
-            AtomicLong count = new AtomicLong();
-            write(multi.map(new Function<Object, Buffer>() {
-                @Override
-                public Buffer apply(Object o) {
-                    if (o instanceof ReactiveRoutes.ServerSentEvent) {
-                        ReactiveRoutes.ServerSentEvent<?> ev = (ReactiveRoutes.ServerSentEvent<?>) o;
-                        long id = ev.id() != -1 ? ev.id() : count.getAndIncrement();
-                        String e = ev.event() == null ? "" : "event: " + ev.event() + "\n";
-                        String data = serializeResponse((A2AResponse<?>) ev.data());
-                        return Buffer.buffer(e + "data: " + data + "\nid: " + id + "\n\n");
-                    }
-                    String data = serializeResponse((A2AResponse<?>) o);
-                    return Buffer.buffer("data: " + data + "\nid: " + count.getAndIncrement() + "\n\n");
-                }
-            }), rc);
-        }
-
-        private static void endOfStream(HttpServerResponse response) {
-            if (response.bytesWritten() == 0) { // No item
-                MultiMap headers = response.headers();
-                if (headers.get(CONTENT_TYPE) == null) {
-                    headers.set(CONTENT_TYPE, SERVER_SENT_EVENTS);
-                }
-            }
-            response.end();
         }
     }
 }

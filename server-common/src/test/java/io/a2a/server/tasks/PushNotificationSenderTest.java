@@ -21,10 +21,17 @@ import io.a2a.client.http.A2AHttpResponse;
 import io.a2a.common.A2AHeaders;
 import io.a2a.jsonrpc.common.json.JsonProcessingException;
 import io.a2a.jsonrpc.common.json.JsonUtil;
+import io.a2a.spec.Artifact;
+import io.a2a.spec.Message;
+import io.a2a.spec.Part;
 import io.a2a.spec.PushNotificationConfig;
+import io.a2a.spec.StreamingEventKind;
 import io.a2a.spec.Task;
+import io.a2a.spec.TaskArtifactUpdateEvent;
 import io.a2a.spec.TaskState;
 import io.a2a.spec.TaskStatus;
+import io.a2a.spec.TaskStatusUpdateEvent;
+import io.a2a.spec.TextPart;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -35,12 +42,14 @@ public class PushNotificationSenderTest {
     private BasePushNotificationSender sender;
 
     /**
-     * Simple test implementation of A2AHttpClient that captures HTTP calls for verification
+     * Simple test implementation of A2AHttpClient that captures HTTP calls for verification.
+     * Now captures StreamingEventKind events wrapped in StreamResponse format.
      */
     private static class TestHttpClient implements A2AHttpClient {
-        final List<Task> tasks = Collections.synchronizedList(new ArrayList<>());
+        final List<StreamingEventKind> events = Collections.synchronizedList(new ArrayList<>());
         final List<String> urls = Collections.synchronizedList(new ArrayList<>());
         final List<Map<String, String>> headers = Collections.synchronizedList(new ArrayList<>());
+        final List<String> rawBodies = Collections.synchronizedList(new ArrayList<>());
         volatile CountDownLatch latch;
         volatile boolean shouldThrowException = false;
 
@@ -77,8 +86,13 @@ public class PushNotificationSenderTest {
                 }
 
                 try {
-                    Task task = JsonUtil.fromJson(body, Task.class);
-                    tasks.add(task);
+                    // Store raw body for verification
+                    rawBodies.add(body);
+
+                    // Parse StreamResponse format to extract the event
+                    // The body contains a wrapper with one of: task, message, statusUpdate, artifactUpdate
+                    StreamingEventKind event = JsonUtil.fromJson(body, StreamingEventKind.class);
+                    events.add(event);
                     urls.add(url);
                     headers.add(new java.util.HashMap<>(requestHeaders));
 
@@ -99,7 +113,7 @@ public class PushNotificationSenderTest {
                         }
                     };
                 } catch (JsonProcessingException e) {
-                    throw new IOException("Failed to parse task JSON", e);
+                    throw new IOException("Failed to parse StreamingEventKind JSON", e);
                 } finally {
                     if (latch != null) {
                         latch.countDown();
@@ -154,12 +168,14 @@ public class PushNotificationSenderTest {
 
         // Wait for the async operation to complete
         assertTrue(testHttpClient.latch.await(5, TimeUnit.SECONDS), "HTTP call should complete within 5 seconds");
-        
-        // Verify the task was sent via HTTP
-        assertEquals(1, testHttpClient.tasks.size());
-        Task sentTask = testHttpClient.tasks.get(0);
+
+        // Verify the task was sent via HTTP wrapped in StreamResponse format
+        assertEquals(1, testHttpClient.events.size());
+        StreamingEventKind sentEvent = testHttpClient.events.get(0);
+        assertTrue(sentEvent instanceof Task, "Event should be a Task");
+        Task sentTask = (Task) sentEvent;
         assertEquals(taskData.id(), sentTask.id());
-        
+
         // Verify that no authentication header was sent (invalid token should not add header)
         assertEquals(1, testHttpClient.headers.size());
         Map<String, String> sentHeaders = testHttpClient.headers.get(0);
@@ -192,10 +208,10 @@ public class PushNotificationSenderTest {
         String taskId = "task_send_success";
         Task taskData = createSampleTask(taskId, TaskState.COMPLETED);
         PushNotificationConfig config = createSamplePushConfig("http://notify.me/here", "cfg1", null);
-        
+
         // Set up the configuration in the store
         configStore.setInfo(taskId, config);
-        
+
         // Set up latch to wait for async completion
         testHttpClient.latch = new CountDownLatch(1);
 
@@ -203,13 +219,19 @@ public class PushNotificationSenderTest {
 
         // Wait for the async operation to complete
         assertTrue(testHttpClient.latch.await(5, TimeUnit.SECONDS), "HTTP call should complete within 5 seconds");
-        
-        // Verify the task was sent via HTTP
-        assertEquals(1, testHttpClient.tasks.size());
-        Task sentTask = testHttpClient.tasks.get(0);
+
+        // Verify the task was sent via HTTP wrapped in StreamResponse format
+        assertEquals(1, testHttpClient.events.size());
+        StreamingEventKind sentEvent = testHttpClient.events.get(0);
+        assertTrue(sentEvent instanceof Task, "Event should be a Task");
+        Task sentTask = (Task) sentEvent;
         assertEquals(taskData.id(), sentTask.id());
         assertEquals(taskData.contextId(), sentTask.contextId());
         assertEquals(taskData.status().state(), sentTask.status().state());
+
+        // Verify StreamResponse wrapper is present in raw body
+        String rawBody = testHttpClient.rawBodies.get(0);
+        assertTrue(rawBody.contains("\"task\""), "Raw body should contain 'task' discriminator for StreamResponse");
     }
 
     @Test
@@ -217,10 +239,10 @@ public class PushNotificationSenderTest {
         String taskId = "task_send_with_token";
         Task taskData = createSampleTask(taskId, TaskState.COMPLETED);
         PushNotificationConfig config = createSamplePushConfig("http://notify.me/here", "cfg1", "unique_token");
-        
+
         // Set up the configuration in the store
         configStore.setInfo(taskId, config);
-        
+
         // Set up latch to wait for async completion
         testHttpClient.latch = new CountDownLatch(1);
 
@@ -228,12 +250,14 @@ public class PushNotificationSenderTest {
 
         // Wait for the async operation to complete
         assertTrue(testHttpClient.latch.await(5, TimeUnit.SECONDS), "HTTP call should complete within 5 seconds");
-        
-        // Verify the task was sent via HTTP
-        assertEquals(1, testHttpClient.tasks.size());
-        Task sentTask = testHttpClient.tasks.get(0);
+
+        // Verify the task was sent via HTTP wrapped in StreamResponse format
+        assertEquals(1, testHttpClient.events.size());
+        StreamingEventKind sentEvent = testHttpClient.events.get(0);
+        assertTrue(sentEvent instanceof Task, "Event should be a Task");
+        Task sentTask = (Task) sentEvent;
         assertEquals(taskData.id(), sentTask.id());
-        
+
         // Verify that the X-A2A-Notification-Token header is sent with the correct token
         assertEquals(1, testHttpClient.headers.size());
         Map<String, String> sentHeaders = testHttpClient.headers.get(0);
@@ -250,12 +274,12 @@ public class PushNotificationSenderTest {
     public void testSendNotificationNoConfig() {
         String taskId = "task_send_no_config";
         Task taskData = createSampleTask(taskId, TaskState.COMPLETED);
-        
+
         // Don't set any configuration in the store
         sender.sendNotification(taskData);
 
         // Verify no HTTP calls were made
-        assertEquals(0, testHttpClient.tasks.size());
+        assertEquals(0, testHttpClient.events.size());
     }
 
     @Test
@@ -274,11 +298,11 @@ public class PushNotificationSenderTest {
         Task taskData = createSampleTask(taskId, TaskState.COMPLETED);
         PushNotificationConfig config1 = createSamplePushConfig("http://notify.me/cfg1", "cfg1", null);
         PushNotificationConfig config2 = createSamplePushConfig("http://notify.me/cfg2", "cfg2", null);
-        
+
         // Set up multiple configurations in the store
         configStore.setInfo(taskId, config1);
         configStore.setInfo(taskId, config2);
-        
+
         // Set up latch to wait for async completion (2 calls expected)
         testHttpClient.latch = new CountDownLatch(2);
 
@@ -286,14 +310,16 @@ public class PushNotificationSenderTest {
 
         // Wait for the async operations to complete
         assertTrue(testHttpClient.latch.await(5, TimeUnit.SECONDS), "HTTP calls should complete within 5 seconds");
-        
-        // Verify both tasks were sent via HTTP
-        assertEquals(2, testHttpClient.tasks.size());
+
+        // Verify both events were sent via HTTP wrapped in StreamResponse format
+        assertEquals(2, testHttpClient.events.size());
         assertEquals(2, testHttpClient.urls.size());
         assertTrue(testHttpClient.urls.containsAll(java.util.List.of("http://notify.me/cfg1", "http://notify.me/cfg2")));
-        
-        // Both tasks should be identical (same task sent to different endpoints)
-        for (Task sentTask : testHttpClient.tasks) {
+
+        // Both events should be identical (same event sent to different endpoints)
+        for (StreamingEventKind sentEvent : testHttpClient.events) {
+            assertTrue(sentEvent instanceof Task, "Event should be a Task");
+            Task sentTask = (Task) sentEvent;
             assertEquals(taskData.id(), sentTask.id());
             assertEquals(taskData.contextId(), sentTask.contextId());
             assertEquals(taskData.status().state(), sentTask.status().state());
@@ -315,7 +341,112 @@ public class PushNotificationSenderTest {
         // This should not throw an exception - errors should be handled gracefully
         sender.sendNotification(taskData);
 
-        // Verify no tasks were successfully processed due to the error
-        assertEquals(0, testHttpClient.tasks.size());
+        // Verify no events were successfully processed due to the error
+        assertEquals(0, testHttpClient.events.size());
+    }
+
+    @Test
+    public void testSendNotificationMessage() throws InterruptedException {
+        String taskId = "task_send_message";
+        Message message = Message.builder()
+                .taskId(taskId)
+                .role(Message.Role.AGENT)
+                .parts(new TextPart("Hello from agent"))
+                .build();
+        PushNotificationConfig config = createSamplePushConfig("http://notify.me/here", "cfg1", null);
+
+        // Set up the configuration in the store
+        configStore.setInfo(taskId, config);
+
+        // Set up latch to wait for async completion
+        testHttpClient.latch = new CountDownLatch(1);
+
+        sender.sendNotification(message);
+
+        // Wait for the async operation to complete
+        assertTrue(testHttpClient.latch.await(5, TimeUnit.SECONDS), "HTTP call should complete within 5 seconds");
+
+        // Verify the message was sent via HTTP wrapped in StreamResponse format
+        assertEquals(1, testHttpClient.events.size());
+        StreamingEventKind sentEvent = testHttpClient.events.get(0);
+        assertTrue(sentEvent instanceof Message, "Event should be a Message");
+        Message sentMessage = (Message) sentEvent;
+        assertEquals(taskId, sentMessage.taskId());
+
+        // Verify StreamResponse wrapper with 'message' discriminator
+        String rawBody = testHttpClient.rawBodies.get(0);
+        assertTrue(rawBody.contains("\"message\""), "Raw body should contain 'message' discriminator for StreamResponse");
+    }
+
+    @Test
+    public void testSendNotificationTaskStatusUpdate() throws InterruptedException {
+        String taskId = "task_send_status_update";
+        TaskStatusUpdateEvent statusUpdate = TaskStatusUpdateEvent.builder()
+                .taskId(taskId)
+                .contextId("ctx456")
+                .status(new TaskStatus(TaskState.WORKING))
+                .build();
+        PushNotificationConfig config = createSamplePushConfig("http://notify.me/here", "cfg1", null);
+
+        // Set up the configuration in the store
+        configStore.setInfo(taskId, config);
+
+        // Set up latch to wait for async completion
+        testHttpClient.latch = new CountDownLatch(1);
+
+        sender.sendNotification(statusUpdate);
+
+        // Wait for the async operation to complete
+        assertTrue(testHttpClient.latch.await(5, TimeUnit.SECONDS), "HTTP call should complete within 5 seconds");
+
+        // Verify the status update was sent via HTTP wrapped in StreamResponse format
+        assertEquals(1, testHttpClient.events.size());
+        StreamingEventKind sentEvent = testHttpClient.events.get(0);
+        assertTrue(sentEvent instanceof TaskStatusUpdateEvent, "Event should be a TaskStatusUpdateEvent");
+        TaskStatusUpdateEvent sentUpdate = (TaskStatusUpdateEvent) sentEvent;
+        assertEquals(taskId, sentUpdate.taskId());
+        assertEquals(TaskState.WORKING, sentUpdate.status().state());
+
+        // Verify StreamResponse wrapper with 'statusUpdate' discriminator
+        String rawBody = testHttpClient.rawBodies.get(0);
+        assertTrue(rawBody.contains("\"statusUpdate\""), "Raw body should contain 'statusUpdate' discriminator for StreamResponse");
+    }
+
+    @Test
+    public void testSendNotificationTaskArtifactUpdate() throws InterruptedException {
+        String taskId = "task_send_artifact_update";
+        Artifact artifact = Artifact.builder()
+                .artifactId("artifact-1")
+                .name("test-artifact")
+                .parts(Collections.singletonList(new TextPart("Artifact chunk")))
+                .build();
+        TaskArtifactUpdateEvent artifactUpdate = TaskArtifactUpdateEvent.builder()
+                .taskId(taskId)
+                .contextId("ctx456")
+                .artifact(artifact)
+                .build();
+        PushNotificationConfig config = createSamplePushConfig("http://notify.me/here", "cfg1", null);
+
+        // Set up the configuration in the store
+        configStore.setInfo(taskId, config);
+
+        // Set up latch to wait for async completion
+        testHttpClient.latch = new CountDownLatch(1);
+
+        sender.sendNotification(artifactUpdate);
+
+        // Wait for the async operation to complete
+        assertTrue(testHttpClient.latch.await(5, TimeUnit.SECONDS), "HTTP call should complete within 5 seconds");
+
+        // Verify the artifact update was sent via HTTP wrapped in StreamResponse format
+        assertEquals(1, testHttpClient.events.size());
+        StreamingEventKind sentEvent = testHttpClient.events.get(0);
+        assertTrue(sentEvent instanceof TaskArtifactUpdateEvent, "Event should be a TaskArtifactUpdateEvent");
+        TaskArtifactUpdateEvent sentUpdate = (TaskArtifactUpdateEvent) sentEvent;
+        assertEquals(taskId, sentUpdate.taskId());
+
+        // Verify StreamResponse wrapper with 'artifactUpdate' discriminator
+        String rawBody = testHttpClient.rawBodies.get(0);
+        assertTrue(rawBody.contains("\"artifactUpdate\""), "Raw body should contain 'artifactUpdate' discriminator for StreamResponse");
     }
 }

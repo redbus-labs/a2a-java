@@ -1,6 +1,5 @@
 package io.a2a.extras.queuemanager.replicated.tests;
 
-import static io.a2a.spec.AgentCard.CURRENT_PROTOCOL_VERSION;
 
 import java.util.List;
 
@@ -32,14 +31,12 @@ public class ReplicationTestAgentCardProducer {
                 .capabilities(AgentCapabilities.builder()
                         .streaming(true)
                         .pushNotifications(true)
-                        .stateTransitionHistory(true)
                         .build())
                 .defaultInputModes(List.of("text"))
                 .defaultOutputModes(List.of("text"))
                 .skills(List.of())
                 .supportedInterfaces(List.of(
                         new AgentInterface(TransportProtocol.JSONRPC.asString(), "http://localhost:8081")))
-                .protocolVersions(CURRENT_PROTOCOL_VERSION)
                 .build();
     }
 }

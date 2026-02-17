@@ -224,8 +224,7 @@ The agent (`CloudAgentExecutorProducer`) implements a command-based protocol:
 
 ```java
 @Override
-public void execute(RequestContext context, EventQueue eventQueue) throws JSONRPCError {
-    TaskUpdater updater = new TaskUpdater(context, eventQueue);
+public void execute(RequestContext context, AgentEmitter agentEmitter) throws JSONRPCError {
     String messageText = extractTextFromMessage(context.getMessage()).trim().toLowerCase();
 
     // Get pod name from Kubernetes downward API
@@ -234,21 +233,21 @@ public void execute(RequestContext context, EventQueue eventQueue) throws JSONRP
     if ("complete".equals(messageText)) {
         // Completion trigger - add final artifact and complete
         String artifactText = "Completed by " + podName;
-        List<Part<?>> parts = List.of(new TextPart(artifactText, null));
-        updater.addArtifact(parts);
-        updater.complete();  // Transition to COMPLETED state
+        List<Part<?>> parts = List.of(new TextPart(artifactText));
+        agentEmitter.addArtifact(parts);
+        agentEmitter.complete();  // Transition to COMPLETED state
     } else if (context.getTask() == null) {
         // Initial "start" message - create task in SUBMITTED → WORKING state
-        updater.submit();
-        updater.startWork();
+        agentEmitter.submit();
+        agentEmitter.startWork();
         String artifactText = "Started by " + podName;
-        List<Part<?>> parts = List.of(new TextPart(artifactText, null));
-        updater.addArtifact(parts);
+        List<Part<?>> parts = List.of(new TextPart(artifactText));
+        agentEmitter.addArtifact(parts);
     } else {
         // Subsequent "process" messages - add artifacts (fire-and-forget, stays WORKING)
         String artifactText = "Processed by " + podName;
-        List<Part<?>> parts = List.of(new TextPart(artifactText, null));
-        updater.addArtifact(parts);
+        List<Part<?>> parts = List.of(new TextPart(artifactText));
+        agentEmitter.addArtifact(parts);
     }
 }
 ```

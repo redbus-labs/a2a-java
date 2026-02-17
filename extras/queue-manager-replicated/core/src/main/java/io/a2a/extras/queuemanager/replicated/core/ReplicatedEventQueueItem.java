@@ -149,6 +149,16 @@ public class ReplicatedEventQueueItem implements EventQueueItem {
         }
     }
 
+    /**
+     * Check if this event is a Task event.
+     * Task events should always be processed even for inactive tasks,
+     * as they carry the final task state.
+     * @return true if this is a Task event
+     */
+    public boolean isTaskEvent() {
+        return event instanceof io.a2a.spec.Task;
+    }
+
     @Override
     public String toString() {
         return "ReplicatedEventQueueItem{" +

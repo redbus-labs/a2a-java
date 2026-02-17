@@ -108,7 +108,8 @@ public class RestHandler {
         this.executor = executor;
     }
 
-    public HTTPRestResponse sendMessage(String body, String tenant, ServerCallContext context) {
+    public HTTPRestResponse sendMessage(ServerCallContext context, String tenant, String body) {
+
         try {
             A2AVersionValidator.validateProtocolVersion(agentCard, context);
             A2AExtensions.validateRequiredExtensions(agentCard, context);
@@ -124,7 +125,7 @@ public class RestHandler {
         }
     }
 
-    public HTTPRestResponse sendStreamingMessage(String body, String tenant, ServerCallContext context) {
+    public HTTPRestResponse sendStreamingMessage(ServerCallContext context, String tenant, String body) {
         try {
             if (!agentCard.capabilities().streaming()) {
                 return createErrorResponse(new InvalidRequestError("Streaming is not supported by the agent"));
@@ -143,7 +144,7 @@ public class RestHandler {
         }
     }
 
-    public HTTPRestResponse cancelTask(String taskId, String tenant, ServerCallContext context) {
+    public HTTPRestResponse cancelTask(ServerCallContext context, String tenant, String taskId) {
         try {
             if (taskId == null || taskId.isEmpty()) {
                 throw new InvalidParamsError();
@@ -161,15 +162,15 @@ public class RestHandler {
         }
     }
 
-    public HTTPRestResponse setTaskPushNotificationConfiguration(String taskId, String body, String tenant, ServerCallContext context) {
+    public HTTPRestResponse createTaskPushNotificationConfiguration(ServerCallContext context, String tenant, String body, String taskId) {
         try {
             if (!agentCard.capabilities().pushNotifications()) {
                 throw new PushNotificationNotSupportedError();
             }
-            io.a2a.grpc.SetTaskPushNotificationConfigRequest.Builder builder = io.a2a.grpc.SetTaskPushNotificationConfigRequest.newBuilder();
+            io.a2a.grpc.CreateTaskPushNotificationConfigRequest.Builder builder = io.a2a.grpc.CreateTaskPushNotificationConfigRequest.newBuilder();
             parseRequestBody(body, builder);
             builder.setTenant(tenant);
-            TaskPushNotificationConfig result = requestHandler.onSetTaskPushNotificationConfig(ProtoUtils.FromProto.setTaskPushNotificationConfig(builder), context);
+            TaskPushNotificationConfig result = requestHandler.onCreateTaskPushNotificationConfig(ProtoUtils.FromProto.CreateTaskPushNotificationConfig(builder), context);
             return createSuccessResponse(201, io.a2a.grpc.TaskPushNotificationConfig.newBuilder(ProtoUtils.ToProto.taskPushNotificationConfig(result)));
         } catch (A2AError e) {
             return createErrorResponse(e);
@@ -178,13 +179,13 @@ public class RestHandler {
         }
     }
 
-    public HTTPRestResponse subscribeToTask(String taskId, String tenant, ServerCallContext context) {
+    public HTTPRestResponse subscribeToTask(ServerCallContext context, String tenant, String taskId) {
         try {
             if (!agentCard.capabilities().streaming()) {
                 return createErrorResponse(new InvalidRequestError("Streaming is not supported by the agent"));
             }
             TaskIdParams params = new TaskIdParams(taskId, tenant);
-            Flow.Publisher<StreamingEventKind> publisher = requestHandler.onResubscribeToTask(params, context);
+            Flow.Publisher<StreamingEventKind> publisher = requestHandler.onSubscribeToTask(params, context);
             return createStreamingResponse(publisher);
         } catch (A2AError e) {
             return new HTTPRestStreamingResponse(ZeroPublisher.fromItems(new HTTPRestErrorResponse(e).toJson()));
@@ -193,7 +194,7 @@ public class RestHandler {
         }
     }
 
-    public HTTPRestResponse getTask(String taskId, @Nullable Integer historyLength, String tenant, ServerCallContext context) {
+    public HTTPRestResponse getTask(ServerCallContext context, String tenant, String taskId, @Nullable Integer historyLength) {
         try {
             TaskQueryParams params = new TaskQueryParams(taskId, historyLength, tenant);
             Task task = requestHandler.onGetTask(params, context);
@@ -208,11 +209,11 @@ public class RestHandler {
         }
     }
 
-    public HTTPRestResponse listTasks(@Nullable String contextId, @Nullable String status,
+    public HTTPRestResponse listTasks(ServerCallContext context, String tenant,
+                                       @Nullable String contextId, @Nullable String status,
                                        @Nullable Integer pageSize, @Nullable String pageToken,
                                        @Nullable Integer historyLength, @Nullable String statusTimestampAfter,
-                                       @Nullable Boolean includeArtifacts, String tenant,
-                                       ServerCallContext context) {
+                                       @Nullable Boolean includeArtifacts) {
         try {
             // Build params
             ListTasksParams.Builder paramsBuilder = ListTasksParams.builder();
@@ -268,25 +269,12 @@ public class RestHandler {
             paramsBuilder.tenant(tenant);
             if (statusTimestampAfter != null) {
                 try {
-                    // Try parsing as Unix milliseconds first (integer)
-                    long millis = Long.parseLong(statusTimestampAfter);
-                    if (millis < 0L) {
-                        Map<String, Object> errorData = new HashMap<>();
-                        errorData.put("parameter", "statusTimestampAfter");
-                        errorData.put("reason", "Must be a non-negative timestamp value, got: " + millis);
-                        throw new InvalidParamsError(null, "Invalid params", errorData);
-                    }
-                    paramsBuilder.statusTimestampAfter(Instant.ofEpochMilli(millis));
-                } catch (NumberFormatException nfe) {
-                    // Fall back to ISO-8601 format
-                    try {
-                        paramsBuilder.statusTimestampAfter(Instant.parse(statusTimestampAfter));
-                    } catch (DateTimeParseException e) {
-                        Map<String, Object> errorData = new HashMap<>();
-                        errorData.put("parameter", "lastUpdatedAfter");
-                        errorData.put("reason", "Must be valid Unix milliseconds or ISO-8601 timestamp");
-                        throw new InvalidParamsError(null, "Invalid params", errorData);
-                    }
+                    paramsBuilder.statusTimestampAfter(Instant.parse(statusTimestampAfter));
+                } catch (DateTimeParseException e) {
+                    Map<String, Object> errorData = new HashMap<>();
+                    errorData.put("parameter", "statusTimestampAfter");
+                    errorData.put("reason", "Must be an ISO-8601 timestamp");
+                    throw new InvalidParamsError(null, "Invalid params", errorData);
                 }
             }
             if (includeArtifacts != null) {
@@ -303,7 +291,7 @@ public class RestHandler {
         }
     }
 
-    public HTTPRestResponse getTaskPushNotificationConfiguration(String taskId, @Nullable String configId, String tenant, ServerCallContext context) {
+    public HTTPRestResponse getTaskPushNotificationConfiguration(ServerCallContext context, String tenant, String taskId, String configId) {
         try {
             if (!agentCard.capabilities().pushNotifications()) {
                 throw new PushNotificationNotSupportedError();
@@ -318,7 +306,7 @@ public class RestHandler {
         }
     }
 
-    public HTTPRestResponse listTaskPushNotificationConfigurations(String taskId, int pageSize, String pageToken, String tenant, ServerCallContext context) {
+    public HTTPRestResponse listTaskPushNotificationConfigurations(ServerCallContext context, String tenant, String taskId, int pageSize, String pageToken) {
         try {
             if (!agentCard.capabilities().pushNotifications()) {
                 throw new PushNotificationNotSupportedError();
@@ -333,7 +321,7 @@ public class RestHandler {
         }
     }
 
-    public HTTPRestResponse deleteTaskPushNotificationConfiguration(String taskId, String configId, String tenant, ServerCallContext context) {
+    public HTTPRestResponse deleteTaskPushNotificationConfiguration(ServerCallContext context, String tenant, String taskId, String configId) {
         try {
             if (!agentCard.capabilities().pushNotifications()) {
                 throw new PushNotificationNotSupportedError();
@@ -399,32 +387,46 @@ public class RestHandler {
             Flow.Publisher<StreamingEventKind> publisher) {
         // We can't use the normal convertingProcessor since that propagates any errors as an error handled
         // via Subscriber.onError() rather than as part of the SendStreamingResponse payload
+        log.log(Level.FINE, "REST: convertToSendStreamingMessageResponse called, creating ZeroPublisher");
         return ZeroPublisher.create(createTubeConfig(), tube -> {
+            log.log(Level.FINE, "REST: ZeroPublisher tube created, starting CompletableFuture.runAsync");
             CompletableFuture.runAsync(() -> {
+                log.log(Level.FINE, "REST: Inside CompletableFuture, subscribing to EventKind publisher");
                 publisher.subscribe(new Flow.Subscriber<StreamingEventKind>() {
                     Flow.@Nullable Subscription subscription;
 
                     @Override
                     public void onSubscribe(Flow.Subscription subscription) {
+                        log.log(Level.FINE, "REST: onSubscribe called, storing subscription and requesting first event");
                         this.subscription = subscription;
                         subscription.request(1);
                     }
 
                     @Override
                     public void onNext(StreamingEventKind item) {
+                        log.log(Level.FINE, "REST: onNext called with event: {0}", item.getClass().getSimpleName());
                         try {
                             String payload = JsonFormat.printer().omittingInsignificantWhitespace().print(ProtoUtils.ToProto.taskOrMessageStream(item));
+                            log.log(Level.FINE, "REST: Converted to JSON, sending via tube: {0}", payload.substring(0, Math.min(100, payload.length())));
                             tube.send(payload);
+                            log.log(Level.FINE, "REST: tube.send() completed, requesting next event from EventConsumer");
+                            // Request next event from EventConsumer (Chain 1: EventConsumer → RestHandler)
+                            // This is safe because ZeroPublisher buffers items
+                            // Chain 2 (ZeroPublisher → MultiSseSupport) controls actual delivery via request(1) in onWriteDone()
                             if (subscription != null) {
                                 subscription.request(1);
+                            } else {
+                                log.log(Level.WARNING, "REST: subscription is null in onNext!");
                             }
                         } catch (InvalidProtocolBufferException ex) {
+                            log.log(Level.SEVERE, "REST: JSON conversion failed", ex);
                             onError(ex);
                         }
                     }
 
                     @Override
                     public void onError(Throwable throwable) {
+                        log.log(Level.SEVERE, "REST: onError called", throwable);
                         if (throwable instanceof A2AError jsonrpcError) {
                             tube.send(new HTTPRestErrorResponse(jsonrpcError).toJson());
                         } else {
@@ -435,6 +437,7 @@ public class RestHandler {
 
                     @Override
                     public void onComplete() {
+                        log.log(Level.FINE, "REST: onComplete called, calling tube.complete()");
                         tube.complete();
                     }
                 });
@@ -476,7 +479,7 @@ public class RestHandler {
         return 500;
     }
 
-    public HTTPRestResponse getExtendedAgentCard(String tenant) {
+    public HTTPRestResponse getExtendedAgentCard(ServerCallContext context, String tenant) {
         try {
             if (!agentCard.capabilities().extendedAgentCard() || extendedAgentCard == null || !extendedAgentCard.isResolvable()) {
                 throw new ExtendedAgentCardNotConfiguredError(null, "Extended Card not configured", null);

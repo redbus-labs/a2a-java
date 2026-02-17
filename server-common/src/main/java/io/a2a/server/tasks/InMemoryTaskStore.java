@@ -32,8 +32,9 @@ public class InMemoryTaskStore implements TaskStore, TaskStateProvider {
     private final ConcurrentMap<String, Task> tasks = new ConcurrentHashMap<>();
 
     @Override
-    public void save(Task task) {
+    public void save(Task task, boolean isReplicated) {
         tasks.put(task.id(), task);
+        // InMemoryTaskStore doesn't fire TaskFinalizedEvent, so isReplicated is unused here
     }
 
     @Override

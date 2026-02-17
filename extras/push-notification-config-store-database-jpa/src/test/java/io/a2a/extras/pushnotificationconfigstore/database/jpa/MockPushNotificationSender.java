@@ -8,6 +8,7 @@ import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.inject.Alternative;
 
 import io.a2a.server.tasks.PushNotificationSender;
+import io.a2a.spec.StreamingEventKind;
 import io.a2a.spec.Task;
 
 /**
@@ -19,18 +20,30 @@ import io.a2a.spec.Task;
 @Priority(100)
 public class MockPushNotificationSender implements PushNotificationSender {
 
-    private final Queue<Task> capturedTasks = new ConcurrentLinkedQueue<>();
+    private final Queue<StreamingEventKind> capturedEvents = new ConcurrentLinkedQueue<>();
 
     @Override
-    public void sendNotification(Task task) {
-        capturedTasks.add(task);
+    public void sendNotification(StreamingEventKind event) {
+        capturedEvents.add(event);
     }
 
+    public Queue<StreamingEventKind> getCapturedEvents() {
+        return capturedEvents;
+    }
+
+    /**
+     * For backward compatibility - provides access to Task events only.
+     */
     public Queue<Task> getCapturedTasks() {
-        return capturedTasks;
+        Queue<Task> tasks = new ConcurrentLinkedQueue<>();
+        capturedEvents.stream()
+            .filter(e -> e instanceof Task)
+            .map(e -> (Task) e)
+            .forEach(tasks::add);
+        return tasks;
     }
 
     public void clear() {
-        capturedTasks.clear();
+        capturedEvents.clear();
     }
 }

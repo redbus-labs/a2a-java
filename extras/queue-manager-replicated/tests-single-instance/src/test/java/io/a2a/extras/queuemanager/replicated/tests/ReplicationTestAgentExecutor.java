@@ -7,8 +7,7 @@ import jakarta.enterprise.inject.Produces;
 
 import io.a2a.server.agentexecution.AgentExecutor;
 import io.a2a.server.agentexecution.RequestContext;
-import io.a2a.server.events.EventQueue;
-import io.a2a.server.tasks.TaskUpdater;
+import io.a2a.server.tasks.AgentEmitter;
 import io.a2a.spec.A2AError;
 import io.a2a.spec.InvalidRequestError;
 import io.a2a.spec.Message;
@@ -28,27 +27,25 @@ public class ReplicationTestAgentExecutor {
     public AgentExecutor agentExecutor() {
         return new AgentExecutor() {
             @Override
-            public void execute(RequestContext context, EventQueue eventQueue) throws A2AError {
-
-                TaskUpdater taskUpdater = new TaskUpdater(context, eventQueue);
+            public void execute(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
                 String lastText = getLastTextPart(context.getMessage());
 
                 switch (lastText) {
                     case "create":
                         // Submit task - this should trigger TaskStatusUpdateEvent
-                        taskUpdater.submit();
+                        agentEmitter.submit();
                         break;
                     case "working":
                         // Move task to WORKING state without completing - keeps queue alive
-                        taskUpdater.submit();
-                        taskUpdater.startWork();
+                        agentEmitter.submit();
+                        agentEmitter.startWork();
                         break;
                     case "complete":
                         // Complete the task - should trigger poison pill generation
-                        taskUpdater.submit();
-                        taskUpdater.startWork();
-                        taskUpdater.addArtifact(List.of(new TextPart("Task completed")));
-                        taskUpdater.complete();
+                        agentEmitter.submit();
+                        agentEmitter.startWork();
+                        agentEmitter.addArtifact(List.of(new TextPart("Task completed")));
+                        agentEmitter.complete();
                         break;
                     default:
                         throw new InvalidRequestError("Unknown command: " + lastText);
@@ -56,9 +53,8 @@ public class ReplicationTestAgentExecutor {
             }
 
             @Override
-            public void cancel(RequestContext context, EventQueue eventQueue) throws A2AError {
-                TaskUpdater taskUpdater = new TaskUpdater(context, eventQueue);
-                taskUpdater.cancel();
+            public void cancel(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
+                agentEmitter.cancel();
             }
         };
     }

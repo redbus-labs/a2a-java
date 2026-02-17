@@ -36,7 +36,7 @@ import org.jspecify.annotations.Nullable;
  *
  * <h2>Common Usage Patterns</h2>
  * <pre>{@code
- * public void execute(RequestContext context, EventQueue queue) {
+ * public void execute(RequestContext context, AgentEmitter emitter) {
  *     // Check if this is a new conversation or continuation
  *     Task existingTask = context.getTask();
  *     if (existingTask == null) {
@@ -75,65 +75,52 @@ import org.jspecify.annotations.Nullable;
  */
 public class RequestContext {
 
-    private @Nullable MessageSendParams params;
-    private @Nullable String taskId;
-    private @Nullable String contextId;
-    private @Nullable Task task;
-    private List<Task> relatedTasks = new ArrayList<>();
+    private final @Nullable MessageSendParams params;
+    private final String taskId;
+    private final String contextId;
+    private final @Nullable Task task;
+    private final List<Task> relatedTasks;
     private final @Nullable ServerCallContext callContext;
-    private final IdGenerator idGenerator;
 
-    public RequestContext(
+    /**
+     * Constructor with all fields already validated and initialized.
+     * <p>
+     * <b>Note:</b> Use {@link Builder} instead of calling this constructor directly.
+     * The builder handles ID generation and validation.
+     * </p>
+     *
+     * @param params the message send parameters (can be null for cancel operations)
+     * @param taskId the task identifier (must not be null)
+     * @param contextId the context identifier (must not be null)
+     * @param task the existing task state (null for new conversations)
+     * @param relatedTasks other tasks in the same context (must not be null, can be empty)
+     * @param callContext the server call context (can be null)
+     */
+    private RequestContext(
             @Nullable MessageSendParams params,
-            @Nullable String taskId,
-            @Nullable String contextId,
+            String taskId,
+            String contextId,
             @Nullable Task task,
-            @Nullable List<Task> relatedTasks,
-            @Nullable ServerCallContext callContext) throws InvalidParamsError {
-        this(params, taskId, contextId, task, relatedTasks, callContext, new UUIDIdGenerator());
-    }
-
-    public RequestContext(
-            @Nullable MessageSendParams params,
-            @Nullable String taskId,
-            @Nullable String contextId,
-            @Nullable Task task,
-            @Nullable List<Task> relatedTasks,
-            @Nullable ServerCallContext callContext,
-            IdGenerator idGenerator) throws InvalidParamsError {
+            List<Task> relatedTasks,
+            @Nullable ServerCallContext callContext) {
         this.params = params;
         this.taskId = taskId;
         this.contextId = contextId;
         this.task = task;
-        this.relatedTasks = relatedTasks == null ? new ArrayList<>() : relatedTasks;
+        this.relatedTasks = relatedTasks;
         this.callContext = callContext;
-        this.idGenerator = idGenerator;
-
-        // If the taskId and contextId were specified, they must match the params
-        if (params != null) {
-            if (taskId != null && !taskId.equals(params.message().taskId())) {
-                throw new InvalidParamsError("bad task id");
-            } else {
-                checkOrGenerateTaskId();
-            }
-            if (contextId != null && !contextId.equals(params.message().contextId())) {
-                throw new InvalidParamsError("bad context id");
-            } else {
-                checkOrGenerateContextId();
-            }
-        }
     }
 
     /**
      * Returns the task identifier.
      * <p>
-     * This is auto-generated (UUID) if not provided by the client in the message parameters.
-     * It can be null if the context was not created from message parameters.
+     * This is auto-generated (UUID) by the builder if not provided by the client
+     * in the message parameters. This value is never null.
      * </p>
      *
-     * @return the task ID
+     * @return the task ID (never null)
      */
-    public @Nullable String getTaskId() {
+    public String getTaskId() {
         return taskId;
     }
 
@@ -141,13 +128,13 @@ public class RequestContext {
      * Returns the conversation context identifier.
      * <p>
      * Conversation contexts group related tasks together (e.g., multiple tasks
-     * in the same user session). This is auto-generated (UUID) if not provided by the client
-     * in the message parameters. It can be null if the context was not created from message parameters.
+     * in the same user session). This is auto-generated (UUID) by the builder if
+     * not provided by the client in the message parameters. This value is never null.
      * </p>
      *
-     * @return the context ID
+     * @return the context ID (never null)
      */
-    public @Nullable String getContextId() {
+    public String getContextId() {
         return contextId;
     }
 
@@ -226,6 +213,19 @@ public class RequestContext {
     }
 
     /**
+     * Returns the tenant identifier from the request parameters.
+     * <p>
+     * The tenant is used in multi-tenant environments to identify which
+     * customer or organization the request belongs to.
+     * </p>
+     *
+     * @return the tenant identifier, or null if no params or tenant not set
+     */
+    public @Nullable String getTenant() {
+        return params != null ? params.tenant() : null;
+    }
+
+    /**
      * Extracts all text content from the message and joins with the specified delimiter.
      * <p>
      * This is a convenience method for getting text input from messages that may contain
@@ -246,68 +246,23 @@ public class RequestContext {
      * @param delimiter the string to insert between text parts (null defaults to "\n")
      * @return all text parts joined with delimiter, or empty string if no message
      */
-    public String getUserInput(String delimiter) {
-        if (params == null) {
+    public String getUserInput(@Nullable String delimiter) {
+        Message message = getMessage();
+        if (message == null) {
             return "";
         }
-        if (delimiter == null) {
-            delimiter = "\n";
+        
+        List<Part> parts = message.parts();
+        if (parts == null || parts.isEmpty()) {
+            return "";
         }
-        return getMessageText(params.message(), delimiter);
-    }
 
-    public void attachRelatedTask(Task task) {
-        relatedTasks.add(task);
-    }
-
-    private void checkOrGenerateTaskId() {
-        if (params == null) {
-            return;
-        }
-        if (taskId == null && params.message().taskId() == null) {
-            // Message is immutable, create new one with generated taskId
-            String generatedTaskId = idGenerator.generateId();
-            Message updatedMessage = Message.builder(params.message())
-                    .taskId(generatedTaskId)
-                    .build();
-            params = new MessageSendParams(updatedMessage, params.configuration(), params.metadata());
-            this.taskId = generatedTaskId;
-        } else if (params.message().taskId() != null) {
-            this.taskId = params.message().taskId();
-        }
-    }
-
-    private void checkOrGenerateContextId() {
-        if (params == null) {
-            return;
-        }
-        if (contextId == null && params.message().contextId() == null) {
-            // Message is immutable, create new one with generated contextId
-            String generatedContextId = idGenerator.generateId();
-            Message updatedMessage = Message.builder(params.message())
-                    .contextId(generatedContextId)
-                    .build();
-            params = new MessageSendParams(updatedMessage, params.configuration(), params.metadata());
-            this.contextId = generatedContextId;
-        } else if (params.message().contextId() != null) {
-            this.contextId = params.message().contextId();
-        }
-    }
-
-    private String getMessageText(Message message, String delimiter) {
-        List<String> textParts = getTextParts(message.parts());
-        return String.join(delimiter, textParts);
-    }
-
-    private List<String> getTextParts(List<Part<?>> parts) {
+        String delim = delimiter != null ? delimiter : "\n";
+        
         return parts.stream()
                 .filter(p -> p instanceof TextPart)
                 .map(p -> ((TextPart) p).text())
-                .collect(Collectors.toList());
-    }
-
-    public static Builder builder() {
-        return new Builder();
+                .collect(Collectors.joining(delim));
     }
 
     public static class Builder {
@@ -317,49 +272,88 @@ public class RequestContext {
         private @Nullable Task task;
         private List<Task> relatedTasks = new ArrayList<>();
         private @Nullable ServerCallContext callContext;
-        private IdGenerator idGenerator = new UUIDIdGenerator();
+        private final IdGenerator idGenerator;
 
-        public @Nullable MessageSendParams getParams() {
-            return params;
+        public Builder() {
+            this(new UUIDIdGenerator());
         }
 
-        public Builder setParams(MessageSendParams params) {
+        public Builder(IdGenerator idGenerator) {
+            this.idGenerator = idGenerator;
+        }
+
+        public Builder withParams(MessageSendParams params) {
             this.params = params;
             return this;
         }
 
-        public Builder setTaskId(@Nullable String taskId) {
+        public Builder withTaskId(String taskId) {
             this.taskId = taskId;
             return this;
         }
 
-        public Builder setContextId(@Nullable String contextId) {
+        public Builder withContextId(String contextId) {
             this.contextId = contextId;
             return this;
         }
 
-        public Builder setTask(@Nullable Task task) {
+        public Builder withTask(Task task) {
             this.task = task;
             return this;
         }
 
-        public Builder setRelatedTasks(List<Task> relatedTasks) {
-            this.relatedTasks = relatedTasks;
+        public Builder withRelatedTasks(List<Task> relatedTasks) {
+            this.relatedTasks = relatedTasks != null ? relatedTasks : new ArrayList<>();
             return this;
         }
 
-        public Builder setCallContext(ServerCallContext callContext) {
+        public Builder withCallContext(ServerCallContext callContext) {
             this.callContext = callContext;
             return this;
         }
 
-        public Builder setIdGenerator(IdGenerator idGenerator) {
-            this.idGenerator = idGenerator;
-            return this;
-        }
-
         public RequestContext build() throws InvalidParamsError {
-            return new RequestContext(params, taskId, contextId, task, relatedTasks, callContext, idGenerator);
+            String finalTaskId = this.taskId;
+            String finalContextId = this.contextId;
+
+            if (params != null) {
+                // Validate or extract Task ID
+                String paramTaskId = params.message().taskId();
+                if (finalTaskId != null) {
+                    if (paramTaskId != null && !finalTaskId.equals(paramTaskId)) {
+                         throw new InvalidParamsError("bad task id");
+                    }
+                } else {
+                    finalTaskId = paramTaskId;
+                }
+
+                // Validate or extract Context ID
+                String paramContextId = params.message().contextId();
+                if (finalContextId != null) {
+                    if (paramContextId != null && !finalContextId.equals(paramContextId)) {
+                        throw new InvalidParamsError("bad context id");
+                    }
+                } else {
+                    finalContextId = paramContextId;
+                }
+            }
+
+            if (finalTaskId == null) {
+                finalTaskId = idGenerator.generate();
+            }
+
+            if (finalContextId == null) {
+                finalContextId = idGenerator.generate();
+            }
+
+            return new RequestContext(
+                params,
+                finalTaskId,
+                finalContextId,
+                task,
+                relatedTasks,
+                callContext
+            );
         }
     }
 }

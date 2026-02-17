@@ -1,7 +1,6 @@
 package io.a2a.server.apps.common;
 
 import static io.a2a.spec.A2AMethods.SEND_STREAMING_MESSAGE_METHOD;
-import static io.a2a.spec.AgentCard.CURRENT_PROTOCOL_VERSION;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -80,7 +79,7 @@ import io.a2a.spec.TaskStatusUpdateEvent;
 import io.a2a.spec.TextPart;
 import io.a2a.spec.TransportProtocol;
 import io.a2a.spec.UnsupportedOperationError;
-import io.a2a.util.Utils;
+
 import io.restassured.RestAssured;
 import io.restassured.config.ObjectMapperConfig;
 import io.restassured.specification.RequestSpecification;
@@ -553,7 +552,7 @@ public abstract class AbstractA2AServerTest {
             TaskPushNotificationConfig taskPushConfig
                     = new TaskPushNotificationConfig(
                             MINIMAL_TASK.id(), PushNotificationConfig.builder().id("c295ea44-7543-4f78-b524-7a38915ad6e4").url("http://example.com").build(), "");
-            TaskPushNotificationConfig config = getClient().setTaskPushNotificationConfiguration(taskPushConfig);
+            TaskPushNotificationConfig config = getClient().createTaskPushNotificationConfiguration(taskPushConfig);
             assertEquals(MINIMAL_TASK.id(), config.taskId());
             assertEquals("http://example.com", config.pushNotificationConfig().url());
             assertEquals("c295ea44-7543-4f78-b524-7a38915ad6e4", config.pushNotificationConfig().id());
@@ -573,11 +572,11 @@ public abstract class AbstractA2AServerTest {
                     = new TaskPushNotificationConfig(
                             MINIMAL_TASK.id(), PushNotificationConfig.builder().id("c295ea44-7543-4f78-b524-7a38915ad6e4").url("http://example.com").build(), "");
 
-            TaskPushNotificationConfig setResult = getClient().setTaskPushNotificationConfiguration(taskPushConfig);
+            TaskPushNotificationConfig setResult = getClient().createTaskPushNotificationConfiguration(taskPushConfig);
             assertNotNull(setResult);
 
             TaskPushNotificationConfig config = getClient().getTaskPushNotificationConfiguration(
-                    new GetTaskPushNotificationConfigParams(MINIMAL_TASK.id()));
+                    new GetTaskPushNotificationConfigParams(MINIMAL_TASK.id(), "c295ea44-7543-4f78-b524-7a38915ad6e4"));
             assertEquals(MINIMAL_TASK.id(), config.taskId());
             assertEquals("http://example.com", config.pushNotificationConfig().url());
         } catch (A2AClientException e) {
@@ -624,7 +623,6 @@ public abstract class AbstractA2AServerTest {
         assertEquals("http://example.com/docs", agentCard.documentationUrl());
         assertTrue(agentCard.capabilities().pushNotifications());
         assertTrue(agentCard.capabilities().streaming());
-        assertTrue(agentCard.capabilities().stateTransitionHistory());
         assertTrue(agentCard.capabilities().extendedAgentCard());
         assertTrue(agentCard.skills().isEmpty());
     }
@@ -641,7 +639,7 @@ public abstract class AbstractA2AServerTest {
 
     @Test
     @Timeout(value = 3, unit = TimeUnit.MINUTES)
-    public void testResubscribeExistingTaskSuccess() throws Exception {
+    public void testSubscribeExistingTaskSuccess() throws Exception {
         saveTaskInTaskStore(MINIMAL_TASK);
         try {
             // attempting to send a streaming message instead of explicitly calling queueManager#createOrTap
@@ -655,8 +653,21 @@ public abstract class AbstractA2AServerTest {
             AtomicBoolean wasUnexpectedEvent = new AtomicBoolean(false);
             AtomicReference<Throwable> errorRef = new AtomicReference<>();
 
-            // Create consumer to handle resubscribed events
+            // Create consumer to handle subscribed events
+            AtomicBoolean receivedInitialTask = new AtomicBoolean(false);
             BiConsumer<ClientEvent, AgentCard> consumer = (event, agentCard) -> {
+                // Per A2A spec 3.1.6: ENFORCE that first event is TaskEvent
+                if (!receivedInitialTask.get()) {
+                    if (event instanceof TaskEvent) {
+                        receivedInitialTask.set(true);
+                        // Don't count down latch for initial Task
+                        return;
+                    } else {
+                        fail("First event on subscribe MUST be TaskEvent, but was: " + event.getClass().getSimpleName());
+                    }
+                }
+
+                // Process subsequent events
                 if (event instanceof TaskUpdateEvent taskUpdateEvent) {
                     if (taskUpdateEvent.getUpdateEvent() instanceof TaskArtifactUpdateEvent artifactEvent) {
                         artifactUpdateEvent.set(artifactEvent);
@@ -685,8 +696,8 @@ public abstract class AbstractA2AServerTest {
             awaitStreamingSubscription()
                     .whenComplete((unused, throwable) -> subscriptionLatch.countDown());
 
-            // Resubscribe to the task with specific consumer and error handler
-            getClient().resubscribe(new TaskIdParams(MINIMAL_TASK.id()), List.of(consumer), errorHandler);
+            // subscribe to the task with specific consumer and error handler
+            getClient().subscribeToTask(new TaskIdParams(MINIMAL_TASK.id()), List.of(consumer), errorHandler);
 
             // Wait for subscription to be established
             assertTrue(subscriptionLatch.await(15, TimeUnit.SECONDS));
@@ -705,7 +716,6 @@ public abstract class AbstractA2AServerTest {
                             .taskId(MINIMAL_TASK.id())
                             .contextId(MINIMAL_TASK.contextId())
                             .status(new TaskStatus(TaskState.COMPLETED))
-                            .isFinal(true)
                             .build());
 
             for (Event event : events) {
@@ -740,7 +750,7 @@ public abstract class AbstractA2AServerTest {
 
     @Test
     @Timeout(value = 3, unit = TimeUnit.MINUTES)
-    public void testResubscribeExistingTaskSuccessWithClientConsumers() throws Exception {
+    public void testSubscribeExistingTaskSuccessWithClientConsumers() throws Exception {
         saveTaskInTaskStore(MINIMAL_TASK);
         try {
             // attempting to send a streaming message instead of explicitly calling queueManager#createOrTap
@@ -754,13 +764,26 @@ public abstract class AbstractA2AServerTest {
             AtomicBoolean wasUnexpectedEvent = new AtomicBoolean(false);
             AtomicReference<Throwable> errorRef = new AtomicReference<>();
 
-            // Create consumer to handle resubscribed events
+            // Create consumer to handle subscribed events
+            AtomicBoolean receivedInitialTask = new AtomicBoolean(false);
 
             AgentCard agentCard = createTestAgentCard();
             ClientConfig clientConfig = createClientConfig(true);
             ClientBuilder clientBuilder = Client
                     .builder(agentCard)
                     .addConsumer((evt, agentCard1) -> {
+                        // Per A2A spec 3.1.6: ENFORCE that first event is TaskEvent
+                        if (!receivedInitialTask.get()) {
+                            if (evt instanceof TaskEvent) {
+                                receivedInitialTask.set(true);
+                                // Don't count down latch for initial Task
+                                return;
+                            } else {
+                                fail("First event on subscribe MUST be TaskEvent, but was: " + evt.getClass().getSimpleName());
+                            }
+                        }
+
+                        // Process subsequent events
                         if (evt instanceof TaskUpdateEvent taskUpdateEvent) {
                             if (taskUpdateEvent.getUpdateEvent() instanceof TaskArtifactUpdateEvent artifactEvent) {
                                 artifactUpdateEvent.set(artifactEvent);
@@ -791,8 +814,8 @@ public abstract class AbstractA2AServerTest {
             awaitStreamingSubscription()
                     .whenComplete((unused, throwable) -> subscriptionLatch.countDown());
 
-            // Resubscribe to the task with the client consumer and error handler
-            clientWithConsumer.resubscribe(new TaskIdParams(MINIMAL_TASK.id()));
+            // Subscribe to the task with the client consumer and error handler
+            clientWithConsumer.subscribeToTask(new TaskIdParams(MINIMAL_TASK.id()));
 
             // Wait for subscription to be established
             assertTrue(subscriptionLatch.await(15, TimeUnit.SECONDS));
@@ -811,7 +834,6 @@ public abstract class AbstractA2AServerTest {
                             .taskId(MINIMAL_TASK.id())
                             .contextId(MINIMAL_TASK.contextId())
                             .status(new TaskStatus(TaskState.COMPLETED))
-                            .isFinal(true)
                             .build());
 
             for (Event event : events) {
@@ -845,7 +867,7 @@ public abstract class AbstractA2AServerTest {
     }
 
     @Test
-    public void testResubscribeNoExistingTaskError() throws Exception {
+    public void testSubscribeNoExistingTaskError() throws Exception {
         CountDownLatch errorLatch = new CountDownLatch(1);
         AtomicReference<Throwable> errorRef = new AtomicReference<>();
 
@@ -862,7 +884,7 @@ public abstract class AbstractA2AServerTest {
         };
 
         try {
-            getClient().resubscribe(new TaskIdParams("non-existent-task"), List.of(), errorHandler);
+            getClient().subscribeToTask(new TaskIdParams("non-existent-task"), List.of(), errorHandler);
 
             // Wait for error to be captured (may come via error handler for streaming)
             boolean errorReceived = errorLatch.await(10, TimeUnit.SECONDS);
@@ -918,8 +940,20 @@ public abstract class AbstractA2AServerTest {
             AtomicReference<TaskArtifactUpdateEvent> firstConsumerEvent = new AtomicReference<>();
             AtomicBoolean firstUnexpectedEvent = new AtomicBoolean(false);
             AtomicReference<Throwable> firstErrorRef = new AtomicReference<>();
+            AtomicBoolean firstReceivedInitialTask = new AtomicBoolean(false);
 
             BiConsumer<ClientEvent, AgentCard> firstConsumer = (event, agentCard) -> {
+                // Per A2A spec 3.1.6: ENFORCE that first event is TaskEvent
+                if (!firstReceivedInitialTask.get()) {
+                    if (event instanceof TaskEvent) {
+                        firstReceivedInitialTask.set(true);
+                        return;
+                    } else {
+                        fail("First event on subscribe MUST be TaskEvent, but was: " + event.getClass().getSimpleName());
+                    }
+                }
+
+                // Process subsequent events
                 if (event instanceof TaskUpdateEvent tue && tue.getUpdateEvent() instanceof TaskArtifactUpdateEvent artifact) {
                     firstConsumerEvent.set(artifact);
                     firstConsumerLatch.countDown();
@@ -940,7 +974,7 @@ public abstract class AbstractA2AServerTest {
             awaitStreamingSubscription()
                     .whenComplete((unused, throwable) -> firstSubscriptionLatch.countDown());
 
-            getClient().resubscribe(new TaskIdParams(MINIMAL_TASK.id()),
+            getClient().subscribeToTask(new TaskIdParams(MINIMAL_TASK.id()),
                     List.of(firstConsumer),
                     firstErrorHandler);
 
@@ -963,11 +997,11 @@ public abstract class AbstractA2AServerTest {
             assertNull(firstErrorRef.get());
             assertNotNull(firstConsumerEvent.get());
 
-            // Verify we have multiple child queues (ensureQueue + first resubscribe)
+            // Verify we have multiple child queues (ensureQueue + first subscribe)
             int childCountBeforeSecond = getChildQueueCount(MINIMAL_TASK.id());
             assertTrue(childCountBeforeSecond >= 2, "Should have at least 2 child queues");
 
-            // 3. Second consumer resubscribes while first is still active
+            // 3. Second consumer subscribes while first is still active
             // This simulates the Kafka replication race condition where resubscription happens
             // while other consumers are still active. Without reference counting, the MainQueue
             // might close when the ensureQueue ChildQueue closes, preventing this resubscription.
@@ -975,8 +1009,20 @@ public abstract class AbstractA2AServerTest {
             AtomicReference<TaskArtifactUpdateEvent> secondConsumerEvent = new AtomicReference<>();
             AtomicBoolean secondUnexpectedEvent = new AtomicBoolean(false);
             AtomicReference<Throwable> secondErrorRef = new AtomicReference<>();
+            AtomicBoolean secondReceivedInitialTask = new AtomicBoolean(false);
 
             BiConsumer<ClientEvent, AgentCard> secondConsumer = (event, agentCard) -> {
+                // Per A2A spec 3.1.6: ENFORCE that first event is TaskEvent
+                if (!secondReceivedInitialTask.get()) {
+                    if (event instanceof TaskEvent) {
+                        secondReceivedInitialTask.set(true);
+                        return;
+                    } else {
+                        fail("First event on subscribe MUST be TaskEvent, but was: " + event.getClass().getSimpleName());
+                    }
+                }
+
+                // Process subsequent events
                 if (event instanceof TaskUpdateEvent tue && tue.getUpdateEvent() instanceof TaskArtifactUpdateEvent artifact) {
                     secondConsumerEvent.set(artifact);
                     secondConsumerLatch.countDown();
@@ -999,7 +1045,7 @@ public abstract class AbstractA2AServerTest {
 
             // This should succeed with reference counting because MainQueue stays alive
             // while first consumer's ChildQueue exists
-            getClient().resubscribe(new TaskIdParams(MINIMAL_TASK.id()),
+            getClient().subscribeToTask(new TaskIdParams(MINIMAL_TASK.id()),
                     List.of(secondConsumer),
                     secondErrorHandler);
 
@@ -1311,13 +1357,25 @@ public abstract class AbstractA2AServerTest {
         assertNotNull(taskId);
         assertEquals(multiEventTaskId, taskId);
 
-        // 2. Resubscribe to task (queue should still be open)
+        // 2. Subscribe to task (queue should still be open)
         CountDownLatch resubEventLatch = new CountDownLatch(2);  // artifact-2 + completion
         List<io.a2a.spec.UpdateEvent> resubReceivedEvents = new CopyOnWriteArrayList<>();
         AtomicBoolean resubUnexpectedEvent = new AtomicBoolean(false);
         AtomicReference<Throwable> resubErrorRef = new AtomicReference<>();
+        AtomicBoolean resubReceivedInitialTask = new AtomicBoolean(false);
 
         BiConsumer<ClientEvent, AgentCard> resubConsumer = (event, agentCard) -> {
+            // Per A2A spec 3.1.6: ENFORCE that first event is TaskEvent
+            if (!resubReceivedInitialTask.get()) {
+                if (event instanceof TaskEvent) {
+                    resubReceivedInitialTask.set(true);
+                    return;
+                } else {
+                    fail("First event on subscribe MUST be TaskEvent, but was: " + event.getClass().getSimpleName());
+                }
+            }
+
+            // Process subsequent events
             if (event instanceof TaskUpdateEvent tue) {
                 resubReceivedEvents.add(tue.getUpdateEvent());
                 resubEventLatch.countDown();
@@ -1337,11 +1395,24 @@ public abstract class AbstractA2AServerTest {
         awaitStreamingSubscription()
                 .whenComplete((unused, throwable) -> subscriptionLatch.countDown());
 
-        getClient().resubscribe(new TaskIdParams(taskId),
+        getClient().subscribeToTask(new TaskIdParams(taskId),
                 List.of(resubConsumer),
                 resubErrorHandler);
 
         assertTrue(subscriptionLatch.await(15, TimeUnit.SECONDS));
+
+        // CRITICAL SYNCHRONIZATION: Wait for subscribeToTask's EventConsumer polling loop to start
+        //
+        // Race condition: awaitStreamingSubscription() only guarantees transport-level subscription
+        // (Flow.Subscriber.onSubscribe() called), but EventConsumer polling starts asynchronously
+        // on a separate thread. Without this check, the agent could emit events before any consumer
+        // is ready to receive them, causing events to be lost.
+        //
+        // This stability check waits for the child queue count to match expectedCount for 3
+        // consecutive checks (150ms), ensuring the EventConsumer is actively polling and won't
+        // miss events when the agent executes.
+        assertTrue(awaitChildQueueCountStable(taskId, 1, 15000),
+                "subscribeToTask child queue should be created and stable");
 
         // 3. Send second streaming message to same taskId
         Message message2 = Message.builder(MESSAGE)
@@ -1355,6 +1426,7 @@ public abstract class AbstractA2AServerTest {
         AtomicBoolean streamUnexpectedEvent = new AtomicBoolean(false);
 
         BiConsumer<ClientEvent, AgentCard> streamConsumer = (event, agentCard) -> {
+            // This consumer is for sendMessage() (not subscribe), so it doesn't get initial TaskEvent
             if (event instanceof TaskUpdateEvent tue) {
                 streamReceivedEvents.add(tue.getUpdateEvent());
                 streamEventLatch.countDown();
@@ -1363,12 +1435,21 @@ public abstract class AbstractA2AServerTest {
             }
         };
 
+        // Wait for streaming subscription to be established before sending message
+        CountDownLatch streamSubscriptionLatch = new CountDownLatch(1);
+        awaitStreamingSubscription()
+                .whenComplete((unused, throwable) -> streamSubscriptionLatch.countDown());
+
         // Streaming message adds artifact-2 and completes task
         getClient().sendMessage(message2, List.of(streamConsumer), null);
 
+        // Ensure subscription is established before agent sends events
+        assertTrue(streamSubscriptionLatch.await(15, TimeUnit.SECONDS),
+                "Stream subscription should be established");
+
         // 4. Verify both consumers received artifact-2 and completion
-        assertTrue(resubEventLatch.await(10, TimeUnit.SECONDS));
-        assertTrue(streamEventLatch.await(10, TimeUnit.SECONDS));
+        assertTrue(resubEventLatch.await(15, TimeUnit.SECONDS));
+        assertTrue(streamEventLatch.await(15, TimeUnit.SECONDS));
 
         assertFalse(resubUnexpectedEvent.get());
         assertFalse(streamUnexpectedEvent.get());
@@ -1424,6 +1505,34 @@ public abstract class AbstractA2AServerTest {
         }
     }
 
+    /**
+     * Waits for the child queue count to stabilize at the expected value by calling the server's
+     * test endpoint. This ensures EventConsumer polling loops have started before proceeding.
+     *
+     * @param taskId the task ID whose child queues to monitor
+     * @param expectedCount the expected number of active child queues
+     * @param timeoutMs maximum time to wait in milliseconds
+     * @return true if the count stabilized at the expected value, false if timeout occurred
+     * @throws IOException if the HTTP request fails
+     * @throws InterruptedException if interrupted while waiting
+     */
+    private boolean awaitChildQueueCountStable(String taskId, int expectedCount, long timeoutMs) throws IOException, InterruptedException {
+        HttpClient client = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_2)
+                .build();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("http://localhost:" + serverPort + "/test/queue/awaitChildCountStable/" +
+                        taskId + "/" + expectedCount + "/" + timeoutMs))
+                .POST(HttpRequest.BodyPublishers.noBody())
+                .build();
+
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        if (response.statusCode() != 200) {
+            throw new RuntimeException(response.statusCode() + ": Awaiting child queue count failed! " + response.body());
+        }
+        return Boolean.parseBoolean(response.body());
+    }
+
     @Test
     @Timeout(value = 1, unit = TimeUnit.MINUTES)
     public void testInputRequiredWorkflow() throws Exception {
@@ -1441,9 +1550,17 @@ public abstract class AbstractA2AServerTest {
             AtomicBoolean initialUnexpectedEvent = new AtomicBoolean(false);
 
             BiConsumer<ClientEvent, AgentCard> initialConsumer = (event, agentCard) -> {
+                // Idempotency guard: prevent late events from modifying state after latch countdown
+                if (initialLatch.getCount() == 0) {
+                    return;
+                }
                 if (event instanceof TaskEvent te) {
-                    initialState.set(te.getTask().status().state());
-                    initialLatch.countDown();
+                    TaskState state = te.getTask().status().state();
+                    initialState.set(state);
+                    // Only count down when we receive INPUT_REQUIRED, not intermediate states like WORKING
+                    if (state == TaskState.INPUT_REQUIRED) {
+                        initialLatch.countDown();
+                    }
                 } else {
                     initialUnexpectedEvent.set(true);
                 }
@@ -1467,9 +1584,17 @@ public abstract class AbstractA2AServerTest {
             AtomicBoolean completionUnexpectedEvent = new AtomicBoolean(false);
 
             BiConsumer<ClientEvent, AgentCard> completionConsumer = (event, agentCard) -> {
+                // Idempotency guard: prevent late events from modifying state after latch countdown
+                if (completionLatch.getCount() == 0) {
+                    return;
+                }
                 if (event instanceof TaskEvent te) {
-                    completedState.set(te.getTask().status().state());
-                    completionLatch.countDown();
+                    TaskState state = te.getTask().status().state();
+                    completedState.set(state);
+                    // Only count down when we receive COMPLETED, not intermediate states like WORKING
+                    if (state == TaskState.COMPLETED) {
+                        completionLatch.countDown();
+                    }
                 } else {
                     completionUnexpectedEvent.set(true);
                 }
@@ -2056,13 +2181,11 @@ public abstract class AbstractA2AServerTest {
                 .capabilities(AgentCapabilities.builder()
                         .streaming(true)
                         .pushNotifications(true)
-                        .stateTransitionHistory(true)
                         .build())
                 .defaultInputModes(List.of("text"))
                 .defaultOutputModes(List.of("text"))
                 .skills(List.of())
                 .supportedInterfaces(List.of(new AgentInterface(getTransportProtocol(), getTransportUrl())))
-                .protocolVersions(CURRENT_PROTOCOL_VERSION)
                 .build();
     }
 
@@ -2165,7 +2288,7 @@ public abstract class AbstractA2AServerTest {
             // Give agent time to finish (task remains in WORKING state - non-final)
             Thread.sleep(2000);
 
-            // THE BIG IDEA TEST: Resubscribe to the task
+            // THE BIG IDEA TEST: Subscribe to the task
             // Even though the agent finished and original ChildQueue closed,
             // MainQueue should still be open because task is in non-final WORKING state
             CountDownLatch resubLatch = new CountDownLatch(1);
@@ -2188,7 +2311,7 @@ public abstract class AbstractA2AServerTest {
             awaitStreamingSubscription()
                     .whenComplete((unused, throwable) -> resubSubscriptionLatch.countDown());
 
-            getClient().resubscribe(new TaskIdParams(taskId),
+            getClient().subscribeToTask(new TaskIdParams(taskId),
                     List.of(resubConsumer),
                     resubErrorHandler);
 
@@ -2267,7 +2390,7 @@ public abstract class AbstractA2AServerTest {
             // Give cleanup time to run after final event
             Thread.sleep(2000);
 
-            // Try to resubscribe to finalized task - should fail
+            // Try to subscribe to finalized task - should fail
             CountDownLatch errorLatch = new CountDownLatch(1);
             AtomicReference<Throwable> resubErrorRef = new AtomicReference<>();
 
@@ -2284,7 +2407,7 @@ public abstract class AbstractA2AServerTest {
 
             // Attempt resubscription
             try {
-                getClient().resubscribe(new TaskIdParams(taskId),
+                getClient().subscribeToTask(new TaskIdParams(taskId),
                         List.of(),
                         resubErrorHandler);
 

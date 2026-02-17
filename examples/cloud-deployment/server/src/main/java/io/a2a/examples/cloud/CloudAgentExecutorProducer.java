@@ -7,8 +7,7 @@ import jakarta.enterprise.inject.Produces;
 
 import io.a2a.server.agentexecution.AgentExecutor;
 import io.a2a.server.agentexecution.RequestContext;
-import io.a2a.server.events.EventQueue;
-import io.a2a.server.tasks.TaskUpdater;
+import io.a2a.server.tasks.AgentEmitter;
 import io.a2a.spec.A2AError;
 import io.a2a.spec.InternalError;
 import io.a2a.spec.Message;
@@ -46,8 +45,7 @@ public class CloudAgentExecutorProducer {
     private static class CloudAgentExecutor implements AgentExecutor {
 
         @Override
-        public void execute(RequestContext context, EventQueue eventQueue) throws A2AError {
-            TaskUpdater updater = new TaskUpdater(context, eventQueue);
+        public void execute(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
 
             try {
                 // Extract user message and normalize
@@ -75,18 +73,18 @@ public class CloudAgentExecutorProducer {
                     LOGGER.info("Completion requested on pod: {}", podName);
                     String artifactText = "Completed by " + podName;
                     List<Part<?>> parts = List.of(new TextPart(artifactText));
-                    updater.addArtifact(parts);
-                    updater.complete();
+                    agentEmitter.addArtifact(parts);
+                    agentEmitter.complete();
                     LOGGER.info("Task completed on pod: {}", podName);
 
                 } else if (context.getTask() == null) {
                     // Initial message - create task in SUBMITTED → WORKING state
                     LOGGER.info("Creating new task on pod: {}", podName);
-                    updater.submit();
-                    updater.startWork();
+                    agentEmitter.submit();
+                    agentEmitter.startWork();
                     String artifactText = "Started by " + podName;
                     List<Part<?>> parts = List.of(new TextPart(artifactText));
-                    updater.addArtifact(parts);
+                    agentEmitter.addArtifact(parts);
                     LOGGER.info("Task created and started on pod: {}", podName);
 
                 } else {
@@ -94,7 +92,7 @@ public class CloudAgentExecutorProducer {
                     LOGGER.info("Adding artifact on pod: {}", podName);
                     String artifactText = "Processed by " + podName;
                     List<Part<?>> parts = List.of(new TextPart(artifactText));
-                    updater.addArtifact(parts);
+                    agentEmitter.addArtifact(parts);
                     // No state change - task remains in WORKING
                     LOGGER.info("Artifact added on pod: {}", podName);
                 }
@@ -109,10 +107,9 @@ public class CloudAgentExecutorProducer {
         }
 
         @Override
-        public void cancel(RequestContext context, EventQueue eventQueue) throws A2AError {
+        public void cancel(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
             LOGGER.info("Task cancellation requested");
-            TaskUpdater updater = new TaskUpdater(context, eventQueue);
-            updater.cancel();
+            agentEmitter.cancel();
         }
 
         /**

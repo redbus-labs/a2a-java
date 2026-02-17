@@ -1,6 +1,5 @@
 package io.a2a.tck.server;
 
-import static io.a2a.spec.AgentCard.CURRENT_PROTOCOL_VERSION;
 
 import java.util.Collections;
 import java.util.List;
@@ -39,7 +38,6 @@ public class AgentCardProducer {
                 .capabilities(AgentCapabilities.builder()
                         .streaming(true)
                         .pushNotifications(true)
-                        .stateTransitionHistory(true)
                         .build())
                 .defaultInputModes(Collections.singletonList("text"))
                 .defaultOutputModes(Collections.singletonList("text"))
@@ -50,7 +48,6 @@ public class AgentCardProducer {
                                 .tags(Collections.singletonList("hello world"))
                                 .examples(List.of("hi", "hello world"))
                                 .build()))
-                .protocolVersions(CURRENT_PROTOCOL_VERSION)
                 .build();
     }
 

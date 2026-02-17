@@ -7,8 +7,7 @@ import jakarta.enterprise.inject.Produces;
 
 import io.a2a.server.agentexecution.AgentExecutor;
 import io.a2a.server.agentexecution.RequestContext;
-import io.a2a.server.events.EventQueue;
-import io.a2a.server.tasks.TaskUpdater;
+import io.a2a.server.tasks.AgentEmitter;
 import io.a2a.spec.A2AError;
 import io.a2a.spec.InvalidRequestError;
 import io.a2a.spec.Message;
@@ -17,7 +16,7 @@ import io.a2a.spec.TextPart;
 import io.quarkus.arc.profile.IfBuildProfile;
 
 /**
- * Simple test AgentExecutor that responds to messages and uses TaskUpdater.addArtifact()
+ * Simple test AgentExecutor that responds to messages and uses AgentEmitter.addArtifact()
  * to trigger TaskUpdateEvents for our integration test.
  */
 @IfBuildProfile("test")
@@ -28,18 +27,16 @@ public class JpaDatabaseTaskStoreTestAgentExecutor {
     public AgentExecutor agentExecutor() {
         return new AgentExecutor() {
             @Override
-            public void execute(RequestContext context, EventQueue eventQueue) throws A2AError {
+            public void execute(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
                 System.out.println("TestAgentExecutor.execute() called for task: " + context.getTaskId());
                 System.out.println("Message " + context.getMessage());
-
-                TaskUpdater taskUpdater = new TaskUpdater(context, eventQueue);
                 String lastText = getLastTextPart(context.getMessage());
                 switch (lastText) {
                     case "create":
-                        taskUpdater.submit();
+                        agentEmitter.submit();
                         break;
                     case "add-artifact":
-                        taskUpdater.addArtifact(List.of(new TextPart(lastText)), "art-1", "test", null);
+                        agentEmitter.addArtifact(List.of(new TextPart(lastText)), "art-1", "test", null);
                         break;
                     default:
                         throw new InvalidRequestError(lastText + " is unknown");
@@ -47,9 +44,8 @@ public class JpaDatabaseTaskStoreTestAgentExecutor {
             }
 
             @Override
-            public void cancel(RequestContext context, EventQueue eventQueue) throws A2AError {
-                TaskUpdater taskUpdater = new TaskUpdater(context, eventQueue);
-                taskUpdater.cancel();
+            public void cancel(RequestContext context, AgentEmitter agentEmitter) throws A2AError {
+                agentEmitter.cancel();
             }
         };
     }
