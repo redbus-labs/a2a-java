@@ -11,3 +11,6 @@ echo "Waiting for database to be ready..."
 sleep 5
 
 echo "Database started successfully."
+
+echo "To initialize the database schema and insert sample data, run:"
+echo "  mvn exec:java -pl extras/task-store-database-jpa"
