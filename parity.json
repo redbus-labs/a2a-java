@@ -1,0 +1,66 @@
+{
+  "meta": {
+    "last_updated": "2026-02-17",
+    "python_reference_repo": "a2a-python",
+    "python_reference_commit": "dc1fedd2c9d3d8e8e016826a49fbfff278d87d13",
+    "java_version": "1.0.0.Alpha3-SNAPSHOT"
+  },
+  "features": [
+    {
+      "id": "client_instantiation",
+      "name": "Client Initialization",
+      "status": "DONE",
+      "python_ref": "client/client.py:Client.__init__",
+      "java_impl": "client/src/main/java/io/a2a/client/Client.java",
+      "notes": "Java uses Builder pattern."
+    },
+    {
+      "id": "transport_grpc_server",
+      "name": "Server gRPC Transport",
+      "status": "DONE",
+      "python_ref": "server/request_handlers/grpc_handler.py",
+      "java_impl": "transport/grpc/",
+      "notes": "Implemented via spec-grpc."
+    },
+    {
+      "id": "transport_jsonrpc_server",
+      "name": "Server JSON-RPC Transport",
+      "status": "DONE",
+      "python_ref": "server/request_handlers/jsonrpc_handler.py",
+      "java_impl": "jsonrpc-common/",
+      "notes": "Common handlers available."
+    },
+    {
+      "id": "core_agent_execution",
+      "name": "Agent Executor",
+      "status": "DONE",
+      "python_ref": "server/agent_execution/agent_executor.py",
+      "java_impl": "server-common/src/main/java/io/a2a/server/agentexecution/AgentExecutor.java",
+      "notes": "Supports AgentEmitter."
+    },
+    {
+      "id": "telemetry",
+      "name": "OpenTelemetry",
+      "status": "DONE",
+      "python_ref": "utils/telemetry.py",
+      "java_impl": "server-common/src/main/java/io/a2a/server/telemetry/A2ATelemetry.java",
+      "notes": "Full OpenTelemetry integration."
+    },
+    {
+      "id": "signing_jws",
+      "name": "JWS Signing",
+      "status": "DONE",
+      "python_ref": "utils/signing.py",
+      "java_impl": "server-common/src/main/java/io/a2a/server/security/SigningService.java",
+      "notes": "Supports ES256/ES384."
+    },
+    {
+      "id": "id_generation",
+      "name": "ID Generation",
+      "status": "DONE",
+      "python_ref": "utils/ids.py",
+      "java_impl": "server-common/src/main/java/io/a2a/server/util/IdGenerator.java",
+      "notes": "Pluggable interface (UUID default)."
+    }
+  ]
+}
